@@ -2,13 +2,15 @@
 
 设计要点：
 - 确定性核心由各分析模块产出结构化数值；网关主要负责"叙述/归纳/角色扮演/批判"。
-- 两种 provider：
+- 三种 provider：
     offline —— 不联网，确定性：narrate() 直接返回传入文本，complete() 做抽取式摘要。
     minimax —— 调用 MiniMax M3 增强。
+    qwen —— 调用 Qwen3.7 Plus 增强。
 - 任何远程失败都自动降级到 offline，不中断流程（错误即信息）。
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Optional
 
@@ -26,10 +28,11 @@ class LLMGateway:
         default_model: str = "offline-deterministic",
         configured_provider: Optional[str] = None,
         tracer: Optional[Tracer] = None,
+        remote_client=None,
     ):
         self.configured_provider = configured_provider or provider
         self.effective_provider = provider
-        self._minimax = minimax_client
+        self._remote = remote_client if remote_client is not None else minimax_client
         self.default_model = default_model
         self.tracer = tracer
 
@@ -41,11 +44,12 @@ class LLMGateway:
     @staticmethod
     def provider_status(settings: Settings) -> tuple[str, str]:
         configured = settings.llm_provider
-        effective = (
-            "minimax"
-            if configured == "minimax" and bool(settings.minimax_api_key)
-            else "offline"
-        )
+        if configured == "minimax" and bool(settings.minimax_api_key.strip()):
+            effective = "minimax"
+        elif configured == "qwen" and bool(settings.qwen_api_key.strip()):
+            effective = "qwen"
+        else:
+            effective = "offline"
         return configured, effective
 
     @classmethod
@@ -55,21 +59,33 @@ class LLMGateway:
         tracer: Optional[Tracer] = None,
     ) -> "LLMGateway":
         configured, effective = cls.provider_status(settings)
-        if effective == "minimax":
-            from miniso_studio.infrastructure.llm.minimax import MiniMaxClient
+        if effective != "offline":
+            if effective == "qwen":
+                from miniso_studio.infrastructure.llm.qwen import QwenClient
 
-            client = MiniMaxClient(
-                api_key=settings.minimax_api_key,
-                base_url=settings.minimax_base_url,
-                model=settings.minimax_model,
-            )
+                client = QwenClient(
+                    api_key=settings.qwen_api_key,
+                    base_url=settings.qwen_base_url,
+                    model=settings.qwen_model,
+                    enable_thinking=settings.qwen_enable_thinking,
+                )
+                default_model = settings.qwen_model
+            else:
+                from miniso_studio.infrastructure.llm.minimax import MiniMaxClient
+
+                client = MiniMaxClient(
+                    api_key=settings.minimax_api_key,
+                    base_url=settings.minimax_base_url,
+                    model=settings.minimax_model,
+                )
+                default_model = settings.minimax_model
             log.bind(node="llm").info(
-                f"LLM configured={configured} effective=minimax model={settings.minimax_model}"
+                f"LLM configured={configured} effective={effective} model={default_model}"
             )
             return cls(
-                provider="minimax",
-                minimax_client=client,
-                default_model=settings.minimax_model,
+                provider=effective,
+                remote_client=client,
+                default_model=default_model,
                 configured_provider=configured,
                 tracer=tracer,
             )
@@ -78,7 +94,7 @@ class LLMGateway:
             configured_provider=configured,
             tracer=tracer,
         )
-        if configured == "minimax":
+        if configured in {"minimax", "qwen"}:
             gateway._emit_provider_fallback(
                 operation="configuration",
                 reason="missing_api_key",
@@ -90,7 +106,10 @@ class LLMGateway:
 
     @property
     def has_remote(self) -> bool:
-        return self.effective_provider == "minimax" and self._minimax is not None
+        return (
+            self.effective_provider in {"minimax", "qwen"}
+            and self._remote is not None
+        )
 
     def _emit_provider_fallback(self, *, operation: str, reason: str) -> None:
         if self.tracer is not None:
@@ -112,12 +131,27 @@ class LLMGateway:
     ) -> None:
         if self.effective_provider == "offline":
             return
+        failed_provider = self.effective_provider
         self.effective_provider = "offline"
-        self._minimax = None
+        self._remote = None
         self.default_model = "offline-deterministic"
-        detail = f"：{exc}" if exc is not None else ""
+        error_category = (
+            str(getattr(exc, "category", "") or type(exc).__name__)
+            if exc is not None
+            else ""
+        )
+        request_id = str(getattr(exc, "request_id", "unavailable") or "unavailable")
+        status = getattr(exc, "status", None)
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", error_category) is None:
+            error_category = type(exc).__name__ if exc is not None else ""
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", request_id) is None:
+            request_id = "unavailable"
+        if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+            status = None
+        detail = f" error_category={error_category}" if error_category else ""
         log.bind(node="llm").warning(
-            f"MiniMax {operation} 返回不可用结果，effective provider 降级 offline{detail}"
+            f"{failed_provider} {operation} 返回不可用结果，"
+            f"effective provider 降级 offline{detail}"
         )
         self._emit_provider_fallback(operation=operation, reason=reason)
         if self.tracer is not None and exc is not None:
@@ -125,7 +159,9 @@ class LLMGateway:
                 "llm",
                 "provider_fallback_detail",
                 operation=operation,
-                error=str(exc),
+                error_category=error_category,
+                request_id=request_id,
+                status=status,
             )
 
     # ── 主接口 ──────────────────────────────────────────────
@@ -140,7 +176,13 @@ class LLMGateway:
     ) -> LLMResponse:
         if self.has_remote:
             try:
-                response = self._minimax.chat(system, prompt, model, max_tokens, temperature)
+                response = self._remote.chat(
+                    system,
+                    prompt,
+                    model,
+                    max_tokens,
+                    temperature,
+                )
                 if response.text.strip():
                     return response
                 self._fallback_to_offline(
@@ -155,7 +197,7 @@ class LLMGateway:
         """把确定性结果包装成更顺畅的叙述。
 
         offline：直接返回 default_text（已是可读的确定性文本）。
-        minimax：在 default_text 基础上做润色/扩写，但不得引入新事实。
+        远程 provider：在 default_text 基础上做润色/扩写，但不得引入新事实。
         """
         if not self.has_remote:
             return default_text
@@ -169,7 +211,12 @@ class LLMGateway:
             f"待润色的草稿：\n{default_text}\n\n请输出润色后的版本："
         )
         try:
-            resp = self._minimax.chat(system, prompt, max_tokens=900, temperature=0.5)
+            resp = self._remote.chat(
+                system,
+                prompt,
+                max_tokens=900,
+                temperature=0.5,
+            )
             text = resp.text.strip()
             if text:
                 return text

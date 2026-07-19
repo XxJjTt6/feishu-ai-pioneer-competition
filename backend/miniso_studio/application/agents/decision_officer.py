@@ -122,11 +122,28 @@ class DecisionOfficerAgent(Agent):
         ranks = [rank_by_id[item] for item in concept.addressed_opportunity_ids if item in rank_by_id]
         opportunity_rank = min(ranks) if ranks else len(opportunities)
 
-        concept_copy = " ".join(
-            [concept.name, concept.one_liner, *concept.key_features, *(d.statement for d in concept.differentiators)]
-        )
         trends = state.market_intel.trends if state.market_intel else []
-        matching_trends = [trend for trend in trends if trend.name in concept_copy]
+        if state.legacy_input:
+            concept_copy = " ".join(
+                [
+                    concept.name,
+                    concept.one_liner,
+                    *concept.key_features,
+                    *(item.statement for item in concept.differentiators),
+                ]
+            )
+            matching_trends = [trend for trend in trends if trend.name in concept_copy]
+        else:
+            concept_evidence_ids = {
+                source_id
+                for differentiator in concept.differentiators
+                for source_id in differentiator.evidence_ids
+            }
+            matching_trends = [
+                trend
+                for trend in trends
+                if concept_evidence_ids.intersection(trend.evidence_ids)
+            ]
         acceptance = (
             sum(item.acceptance for item in evaluation.interviews) / len(evaluation.interviews)
             if evaluation.interviews

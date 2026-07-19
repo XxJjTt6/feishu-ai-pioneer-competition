@@ -34,12 +34,66 @@ const PATH_LABELS = {
 };
 
 const CONCEPT_ASSETS = {
-  "C-TREND": "static/assets/miniso-v1/city-scent-charm-v1.png",
-  "C-VOC": "static/assets/miniso-v1/mood-charm-v1.png",
-  "C-WHITESPACE": "static/assets/miniso-v1/cocreate-patch-kit-v1.png",
+  trend_driven: "static/assets/miniso-v1/city-scent-charm-v1.png",
+  voc_driven: "static/assets/miniso-v1/mood-charm-v1.png",
+  whitespace_driven: "static/assets/miniso-v1/cocreate-patch-kit-v1.png",
 };
 
 const SSE_MESSAGE_TYPES = new Set(["heartbeat", "trace", "result", "error", "done"]);
+
+const DECISION_OPTIONS = {
+  product_category: new Set([
+    "plush",
+    "fragrance_accessory",
+    "stationery",
+    "home_storage",
+    "beauty_tool",
+    "digital_accessory",
+    "other",
+  ]),
+  target_segment: new Set(["student", "young_professional", "ip_fan", "gift", "family", "collector"]),
+  target_market: new Set(["china", "southeast_asia", "japan_korea", "europe_america", "middle_east", "global"]),
+  price_band: new Set(["entry", "mid", "premium"]),
+  ip_strategy: new Set(["original", "licensed", "none", "evaluate"]),
+  objectives: new Set(["emotional", "social", "margin", "supply_chain", "localization"]),
+};
+
+const DECISION_LABELS = {
+  product_category: {
+    plush: "毛绒",
+    fragrance_accessory: "香氛配饰",
+    stationery: "文创文具",
+    home_storage: "家居收纳",
+    beauty_tool: "美妆工具",
+    digital_accessory: "数码配件",
+    other: "其他",
+  },
+  target_segment: {
+    student: "学生",
+    young_professional: "年轻职场人",
+    ip_fan: "IP 粉丝",
+    gift: "礼赠人群",
+    family: "亲子家庭",
+    collector: "收藏爱好者",
+  },
+  target_market: {
+    china: "中国",
+    southeast_asia: "东南亚",
+    japan_korea: "日韩",
+    europe_america: "欧美",
+    middle_east: "中东",
+    global: "全球",
+  },
+  price_band: { entry: "入门", mid: "中端", premium: "高端" },
+  ip_strategy: { original: "原创 IP", licensed: "授权 IP", none: "无 IP", evaluate: "IP 待评估" },
+  objectives: {
+    emotional: "情绪价值",
+    social: "社交传播",
+    margin: "毛利空间",
+    supply_chain: "供应链",
+    localization: "本地化",
+  },
+};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -80,6 +134,117 @@ function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+function namedControlValue(form, name) {
+  const controls = form?.elements;
+  const control = typeof controls?.namedItem === "function" ? controls.namedItem(name) : controls?.[name];
+  if (!control) return "";
+  if (typeof control.value === "string") return control.value;
+  const selected = Array.from(control).find((item) => item?.checked);
+  return typeof selected?.value === "string" ? selected.value : "";
+}
+
+function readDecisionInput(form) {
+  const checkedObjectives = typeof form?.querySelectorAll === "function"
+    ? form.querySelectorAll('[name="objectives"]:checked')
+    : [];
+  const productCategory = String(namedControlValue(form, "product_category")).trim();
+  return {
+    brief: String(namedControlValue(form, "brief")).trim(),
+    product_category: productCategory,
+    custom_category: productCategory === "other" ? String(namedControlValue(form, "custom_category")).trim() : "",
+    target_segment: String(namedControlValue(form, "target_segment")).trim(),
+    target_market: String(namedControlValue(form, "target_market")).trim(),
+    price_band: String(namedControlValue(form, "price_band")).trim(),
+    ip_strategy: String(namedControlValue(form, "ip_strategy")).trim(),
+    objectives: Array.from(checkedObjectives, (item) => String(item?.value || "").trim()).filter(Boolean),
+    constraints: String(namedControlValue(form, "constraints")).trim(),
+  };
+}
+
+function validateDecisionInput(rawInput) {
+  const input = asObject(rawInput);
+  const errors = {};
+  const brief = String(input.brief ?? "").trim();
+  const customCategory = String(input.custom_category ?? "").trim();
+  const constraints = String(input.constraints ?? "").trim();
+  const objectives = asArray(input.objectives).map((item) => String(item));
+
+  if (!brief) errors.brief = "请输入决策简报。";
+  else if (brief.length > 500) errors.brief = "决策简报最多 500 字。";
+  for (const field of ["product_category", "target_segment", "target_market", "price_band", "ip_strategy"]) {
+    if (!DECISION_OPTIONS[field].has(String(input[field] ?? ""))) errors[field] = "请选择有效选项。";
+  }
+  if (input.product_category === "other" && !customCategory) errors.custom_category = "请填写自定义品类。";
+  else if (customCategory.length > 40) errors.custom_category = "自定义品类最多 40 字。";
+  if (objectives.length < 1 || objectives.length > 4 || objectives.some((item) => !DECISION_OPTIONS.objectives.has(item))) {
+    errors.objectives = "请选择 1-4 项经营目标。";
+  }
+  if (constraints.length > 300) errors.constraints = "约束条件最多 300 字。";
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+function buildStreamUrl(input, threadId) {
+  const source = asObject(input);
+  const params = new URLSearchParams();
+  for (const field of [
+    "brief",
+    "product_category",
+    "custom_category",
+    "target_segment",
+    "target_market",
+    "price_band",
+    "ip_strategy",
+  ]) params.append(field, String(source[field] ?? ""));
+  for (const objective of asArray(source.objectives)) params.append("objectives", String(objective));
+  params.append("constraints", String(source.constraints ?? ""));
+  params.append("thread_id", String(threadId ?? ""));
+  return `api/stream?${params.toString()}&hitl=false`;
+}
+
+async function createStreamTicket(input, threadId, fetchImpl = fetch) {
+  const response = await fetchImpl("api/stream/ticket", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...asObject(input), thread_id: threadId, hitl: false }),
+  });
+  if (!response.ok) throw new Error("stream_ticket");
+  const payload = asObject(await response.json());
+  requireContract(payload.thread_id === threadId, "SSE 票据 thread_id 不一致");
+  requireContract(
+    /^api\/stream\?ticket=[a-f0-9]{32}$/.test(String(payload.stream_url || "")),
+    "SSE 票据 URL 不符合契约",
+  );
+  return payload;
+}
+
+function decisionInputSummary(rawInput) {
+  const input = asObject(rawInput);
+  const category = input.product_category === "other"
+    ? input.custom_category
+    : DECISION_LABELS.product_category[input.product_category];
+  const objectives = asArray(input.objectives)
+    .map((value) => DECISION_LABELS.objectives[value] || value)
+    .join("、");
+  return [
+    `本轮：${safeText(input.brief, 80)}`,
+    safeText(category, 40),
+    DECISION_LABELS.target_segment[input.target_segment] || input.target_segment,
+    DECISION_LABELS.target_market[input.target_market] || input.target_market,
+    DECISION_LABELS.price_band[input.price_band] || input.price_band,
+    DECISION_LABELS.ip_strategy[input.ip_strategy] || input.ip_strategy,
+    `目标 ${objectives}`,
+    `约束 ${safeText(input.constraints || "无额外约束", 80)}`,
+  ].join(" · ");
+}
+
+function safeDownloadId(value) {
+  const normalized = String(value ?? "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized.slice(0, 80) || "run";
+}
+
 function requireContract(condition, message) {
   if (!condition) throw new TypeError(message);
 }
@@ -113,6 +278,7 @@ function normalizeView(raw) {
     evidence_index: evidenceIndex,
     audit: asObject(source.audit),
     data_provenance: asObject(source.data_provenance),
+    decision_input: asObject(source.decision_input),
     winner_id: winnerId,
   };
 }
@@ -127,6 +293,7 @@ function validateViewContract(raw, expected = {}) {
   if (expected.runId) requireContract(runId === expected.runId, "运行视图 run_id 与 SSE 不一致");
   if (expected.threadId) requireContract(threadId === expected.threadId, "运行视图 thread_id 与 SSE 不一致");
   requireContract(view.status === "completed" && view.awaiting_human === false, "前端只接受已关闭 HITL 的完整结果");
+  requireContract(validateDecisionInput(view.decision_input).valid, "运行视图缺少有效的决策输入快照");
 
   requireContract(view.candidate_skus.length >= 3, "运行视图至少需要三个候选 SKU");
   const candidateIds = view.candidate_skus.map((candidate) => {
@@ -254,6 +421,11 @@ const publicApi = {
   escapeHtml,
   safeText,
   safeHttpUrl,
+  readDecisionInput,
+  validateDecisionInput,
+  buildStreamUrl,
+  createStreamTicket,
+  decisionInputSummary,
   normalizeView,
   validateViewContract,
   bindSseEnvelope,
@@ -273,6 +445,11 @@ if (typeof document !== "undefined") {
     selectedId: null,
     eventSource: null,
     runToken: 0,
+    running: false,
+    reportKind: "full",
+    reportMarkdown: "",
+    reportToken: 0,
+    formTouched: false,
   };
 
   function clearNode(node) {
@@ -333,13 +510,16 @@ if (typeof document !== "undefined") {
     button.type = "button";
     button.className = "evidence-button";
     button.textContent = label;
-    button.dataset.evidenceId = safeText(sourceId, 160);
-    button.addEventListener("click", () => renderEvidence(sourceId));
+    const hasEvidence = Boolean(sourceId && state.view?.evidence_index?.[sourceId]);
+    button.disabled = !hasEvidence;
+    button.dataset.evidenceId = hasEvidence ? safeText(sourceId, 160) : "";
+    if (hasEvidence) button.addEventListener("click", () => renderEvidence(sourceId));
     return button;
   }
 
-  function conceptAsset(candidateId) {
-    return CONCEPT_ASSETS[candidateId] || CONCEPT_ASSETS["C-VOC"];
+  function conceptAsset(candidate) {
+    if (state.view?.decision_input?.product_category !== "fragrance_accessory") return null;
+    return CONCEPT_ASSETS[candidate?.path] || CONCEPT_ASSETS.voc_driven;
   }
 
   function renderWinner(view) {
@@ -355,11 +535,14 @@ if (typeof document !== "undefined") {
     }
     const layout = document.createElement("div");
     layout.className = "winner-layout";
-    const image = document.createElement("img");
-    image.className = "concept-thumb";
-    image.src = conceptAsset(winner.id);
-    image.alt = `${safeText(winner.name, 80)}概念示意`;
-    layout.appendChild(image);
+    const winnerAsset = conceptAsset(winner);
+    if (winnerAsset) {
+      const image = document.createElement("img");
+      image.className = "concept-thumb";
+      image.src = winnerAsset;
+      image.alt = `${safeText(winner.name, 80)}概念示意`;
+      layout.appendChild(image);
+    }
     const copy = document.createElement("div");
     const winnerName = appendText(copy, "h4", winner.name);
     winnerName.dataset.testid = "winner-name";
@@ -456,8 +639,7 @@ if (typeof document !== "undefined") {
       appendText(row, "td", dimension.rationale, "dimension-rationale");
       const evidenceCell = document.createElement("td");
       const ids = asArray(dimension.evidence_ids);
-      if (ids.length) evidenceCell.appendChild(evidenceButton(ids[0], `证据 ${ids.length}`));
-      else evidenceCell.textContent = "—";
+      evidenceCell.appendChild(evidenceButton(ids[0], ids.length ? `证据 ${ids.length}` : "无证据"));
       row.appendChild(evidenceCell);
       body.appendChild(row);
     }
@@ -471,12 +653,15 @@ if (typeof document !== "undefined") {
     const target = dom("candidateDetail");
     if (!target) return;
     clearNode(target);
-    const image = document.createElement("img");
-    image.className = "candidate-visual";
-    image.src = conceptAsset(candidate.id);
-    image.alt = `${safeText(candidate.name, 80)}概念示意`;
-    target.appendChild(image);
-    appendText(target, "p", "概念示意", "visual-caption");
+    const candidateAsset = conceptAsset(candidate);
+    if (candidateAsset) {
+      const image = document.createElement("img");
+      image.className = "candidate-visual";
+      image.src = candidateAsset;
+      image.alt = `${safeText(candidate.name, 80)}概念示意`;
+      target.appendChild(image);
+      appendText(target, "p", "概念示意", "visual-caption");
+    }
     appendText(target, "h3", candidate.name || "候选 SKU");
     appendText(target, "p", PATH_LABELS[candidate.path] || "候选路径", "path-label");
     appendText(target, "p", candidate.one_liner, "lead-copy");
@@ -503,7 +688,7 @@ if (typeof document !== "undefined") {
       appendText(item, "h4", trend.name);
       appendText(item, "p", trend.summary);
       const ids = asArray(trend.evidence_ids);
-      if (ids[0]) item.appendChild(evidenceButton(ids[0], "查看来源"));
+      item.appendChild(evidenceButton(ids[0], ids[0] ? "查看来源" : "无证据"));
       trendTarget?.appendChild(item);
     }
     const opportunities = asArray(view.consumer_insights.opportunities);
@@ -514,7 +699,7 @@ if (typeof document !== "undefined") {
       appendText(item, "p", opportunity.statement);
       appendText(item, "span", `机会分 ${Number(opportunity.opportunity_score || 0).toFixed(2)}`, "signal-score");
       const ids = asArray(opportunity.evidence_ids);
-      if (ids[0]) item.appendChild(evidenceButton(ids[0], "查看依据"));
+      item.appendChild(evidenceButton(ids[0], ids[0] ? "查看依据" : "无证据"));
       opportunityTarget?.appendChild(item);
     }
     if (dom("trendCount")) dom("trendCount").textContent = `${view.trend_signals.length} 条信号`;
@@ -694,21 +879,34 @@ if (typeof document !== "undefined") {
     renderProposal(view);
     renderAudit(view);
     const provenance = view.data_provenance;
-    if (dom("provenanceSummary")) dom("provenanceSummary").textContent = safeText(provenance.disclaimer || "离线演示数据", 180);
-    if (dom("runMeta")) dom("runMeta").textContent = `${safeText(view.run_id, 80)} · ${Number(view.elapsed_seconds || 0).toFixed(2)}s · ${safeText(view.effective_provider || view.provider || "offline", 40)}`;
+    if (dom("provenanceSummary")) {
+      dom("provenanceSummary").textContent = safeText(
+        `${decisionInputSummary(view.decision_input)} · ${provenance.disclaimer || "离线演示数据"}`,
+        420,
+      );
+    }
+    if (dom("runMeta")) {
+      const provider = safeText(view.effective_provider || view.provider || "offline", 40);
+      const model = safeText(view.model || "offline-deterministic", 80);
+      dom("runMeta").textContent = `${safeText(view.run_id, 80)} · ${Number(view.elapsed_seconds || 0).toFixed(2)}s · ${provider} · ${model}`;
+    }
     for (const [id, kind] of [["fullReportLink", "full"], ["openingReportLink", "opening"]]) {
       const link = dom(id);
       if (!link || !view.run_id) continue;
       link.href = `api/report?run_id=${encodeURIComponent(view.run_id)}&kind=${kind}`;
       link.removeAttribute("aria-disabled");
-      link.target = "_blank";
-      link.rel = "noopener";
+      link.dataset.reportKind = kind;
     }
+    if (dom("jsonDownloadBtn")) dom("jsonDownloadBtn").disabled = false;
+    syncFormState();
     const firstEvidence = Object.keys(view.evidence_index)[0];
     if (firstEvidence) renderEvidence(firstEvidence);
   }
 
   function resetWorkspaceForRun() {
+    state.reportToken += 1;
+    state.reportMarkdown = "";
+    closeReportDialog();
     for (const id of [
       "winnerContent",
       "leaderboard",
@@ -750,10 +948,12 @@ if (typeof document !== "undefined") {
       const link = dom(id);
       if (!link) continue;
       link.removeAttribute("href");
-      link.removeAttribute("target");
-      link.removeAttribute("rel");
       link.setAttribute("aria-disabled", "true");
     }
+    if (dom("jsonDownloadBtn")) dom("jsonDownloadBtn").disabled = true;
+    if (dom("reportDownloadBtn")) dom("reportDownloadBtn").disabled = true;
+    if (dom("reportMarkdown")) dom("reportMarkdown").textContent = "";
+    if (dom("reportStatus")) dom("reportStatus").textContent = "选择报告后加载。";
   }
 
   function setError(message) {
@@ -807,19 +1007,193 @@ if (typeof document !== "undefined") {
       const link = dom(id);
       if (!link) continue;
       link.removeAttribute("href");
-      link.removeAttribute("target");
       link.setAttribute("aria-disabled", "true");
     }
+    if (dom("jsonDownloadBtn")) dom("jsonDownloadBtn").disabled = true;
+    if (dom("reportDownloadBtn")) dom("reportDownloadBtn").disabled = true;
+    if (dom("reportMarkdown")) dom("reportMarkdown").textContent = "";
+    if (dom("reportStatus")) dom("reportStatus").textContent = "选择报告后加载。";
     renderWinner(normalizeView({}));
   }
 
-  function startRun() {
-    const briefInput = dom("brief");
-    const button = dom("runBtn");
-    const brief = safeText(briefInput?.value || "", 500).trim();
-    if (!brief) {
-      setError("请输入决策简报。");
-      briefInput?.focus();
+  function setFieldErrors(errors, showErrors) {
+    const form = dom("runForm");
+    if (!form) return;
+    for (const errorNode of form.querySelectorAll("[data-error-for]")) {
+      const field = errorNode.dataset.errorFor;
+      errorNode.textContent = showErrors ? safeText(errors[field] || "", 100) : "";
+    }
+    for (const control of form.querySelectorAll("[name]")) {
+      const invalid = Boolean(showErrors && errors[control.name]);
+      control.setAttribute("aria-invalid", String(invalid));
+    }
+  }
+
+  function updateCharacterCounts() {
+    const brief = dom("brief")?.value || "";
+    const constraints = dom("constraints")?.value || "";
+    if (dom("briefCount")) dom("briefCount").textContent = `${brief.length}/500`;
+    if (dom("constraintsCount")) dom("constraintsCount").textContent = `${constraints.length}/300`;
+  }
+
+  function updateCustomCategory() {
+    const isOther = dom("productCategory")?.value === "other";
+    const field = dom("customCategoryField");
+    const input = dom("customCategory");
+    if (field) field.hidden = !isOther;
+    if (input) {
+      input.required = isOther;
+      input.disabled = state.running || !isOther;
+    }
+  }
+
+  function updateObjectiveLimit() {
+    const options = [...(dom("runForm")?.querySelectorAll('[name="objectives"]') || [])];
+    const checkedCount = options.filter((item) => item.checked).length;
+    for (const option of options) option.disabled = state.running || (checkedCount >= 4 && !option.checked);
+  }
+
+  function syncFormState(showErrors = state.formTouched) {
+    const form = dom("runForm");
+    if (!form) return { input: {}, validation: { valid: false, errors: {} } };
+    updateCustomCategory();
+    updateObjectiveLimit();
+    updateCharacterCounts();
+    const input = readDecisionInput(form);
+    const validation = validateDecisionInput(input);
+    setFieldErrors(validation.errors, showErrors);
+    const runButton = dom("runBtn");
+    const rerunButton = dom("rerunBtn");
+    if (runButton) runButton.disabled = state.running || !validation.valid;
+    if (rerunButton) rerunButton.disabled = state.running || !validation.valid || !state.view;
+    return { input, validation };
+  }
+
+  function setFormRunning(running) {
+    state.running = running;
+    for (const control of dom("runForm")?.querySelectorAll("[data-request-control]") || []) {
+      control.disabled = running;
+    }
+    if (dom("clearBtn")) dom("clearBtn").disabled = running;
+    syncFormState();
+  }
+
+  function closeReportDialog() {
+    const dialog = dom("reportDialog");
+    if (!dialog) return;
+    if (typeof dialog.close === "function" && dialog.open) dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  function selectReportKind(kind) {
+    state.reportKind = kind === "opening" ? "opening" : "full";
+    for (const tab of dom("reportDialog")?.querySelectorAll("[data-report-kind]") || []) {
+      const selected = tab.dataset.reportKind === state.reportKind;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected) dom("reportPanel")?.setAttribute("aria-labelledby", tab.id);
+    }
+  }
+
+  async function loadReport() {
+    if (!state.view?.run_id) return;
+    const token = ++state.reportToken;
+    const status = dom("reportStatus");
+    const output = dom("reportMarkdown");
+    const retry = dom("reportRetryBtn");
+    const download = dom("reportDownloadBtn");
+    if (status) status.textContent = "正在加载报告…";
+    if (output) output.textContent = "";
+    if (retry) retry.disabled = true;
+    if (download) download.disabled = true;
+    state.reportMarkdown = "";
+    try {
+      const url = `api/report?run_id=${encodeURIComponent(state.view.run_id)}&kind=${state.reportKind}`;
+      const response = await fetch(url, { headers: { Accept: "application/json, text/markdown, text/plain" } });
+      if (!response.ok) throw new Error("report");
+      const raw = await response.text();
+      let markdown = raw;
+      try {
+        const payload = JSON.parse(raw);
+        markdown = typeof payload.markdown === "string" ? payload.markdown : raw;
+      } catch (_error) {
+        markdown = raw;
+      }
+      if (token !== state.reportToken) return;
+      state.reportMarkdown = markdown;
+      if (output) output.textContent = markdown;
+      if (status) status.textContent = markdown ? "报告已加载" : "报告内容为空";
+      if (download) download.disabled = !markdown;
+    } catch (_error) {
+      if (token !== state.reportToken) return;
+      if (status) status.textContent = "报告加载失败，请重试。";
+      if (output) output.textContent = "";
+    } finally {
+      if (token === state.reportToken && retry) retry.disabled = false;
+    }
+  }
+
+  function openReport(kind, event) {
+    event?.preventDefault();
+    if (!state.view?.run_id) return;
+    selectReportKind(kind);
+    const dialog = dom("reportDialog");
+    if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+    else dialog?.setAttribute("open", "");
+    loadReport();
+  }
+
+  function downloadBlob(content, type, filename) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function downloadReport() {
+    if (!state.view?.run_id || !state.reportMarkdown) return;
+    const runId = safeDownloadId(state.view.run_id);
+    downloadBlob(state.reportMarkdown, "text/markdown;charset=utf-8", `trend2sku-${runId}-${state.reportKind}.md`);
+  }
+
+  function downloadCurrentResult() {
+    if (!state.view?.run_id) return;
+    const runId = safeDownloadId(state.view.run_id);
+    downloadBlob(`${JSON.stringify(state.view, null, 2)}\n`, "application/json;charset=utf-8", `trend2sku-${runId}-result.json`);
+  }
+
+  function clearAll() {
+    state.runToken += 1;
+    state.reportToken += 1;
+    state.eventSource?.close();
+    state.eventSource = null;
+    state.view = null;
+    state.selectedId = null;
+    state.formTouched = false;
+    state.running = false;
+    dom("runForm")?.reset();
+    closeReportDialog();
+    resetWorkspace();
+    setRuntime(createRuntimeSnapshot(), "就绪，等待运行");
+    const alert = dom("runtimeAlert");
+    if (alert) alert.hidden = true;
+    const warning = dom("warningArea");
+    if (warning) warning.hidden = true;
+    syncFormState(false);
+    dom("brief")?.focus();
+  }
+
+  async function startRun() {
+    state.formTouched = true;
+    const { input, validation } = syncFormState(true);
+    if (!validation.valid) {
+      const firstInvalid = dom("runForm")?.querySelector('[aria-invalid="true"]');
+      firstInvalid?.focus();
       return;
     }
     state.runToken += 1;
@@ -835,17 +1209,17 @@ if (typeof document !== "undefined") {
     setRuntime(reduceRuntime(state.runtime, { type: "run_started" }), "Agent 正在读取离线演示样本");
     const alert = dom("runtimeAlert");
     if (alert) alert.hidden = true;
-    if (button) button.disabled = true;
+    setFormRunning(true);
     let source;
     try {
-      source = new EventSource(
-        `api/stream?brief=${encodeURIComponent(brief)}&hitl=false&thread_id=${encodeURIComponent(requestedThreadId)}`,
-      );
+      const ticket = await createStreamTicket(input, requestedThreadId);
+      if (token !== state.runToken) return;
+      source = new EventSource(ticket.stream_url);
     } catch (_error) {
       state.runtime = reduceRuntime(state.runtime, { type: "run_error" });
       setRuntime(state.runtime, "无法建立运行连接");
       setError("当前浏览器无法建立 Agent 运行连接。");
-      if (button) button.disabled = false;
+      setFormRunning(false);
       return;
     }
     state.eventSource = source;
@@ -860,7 +1234,7 @@ if (typeof document !== "undefined") {
         setError("服务返回了无法解析的运行事件。");
         source.close();
         if (state.eventSource === source) state.eventSource = null;
-        if (button) button.disabled = false;
+        setFormRunning(false);
         return;
       }
       try {
@@ -871,6 +1245,12 @@ if (typeof document !== "undefined") {
           state.runtime = reduceRuntime(state.runtime, { type: "trace", event: trace });
           if (trace.kind === "tool_call" && trace.status === "error") {
             state.runtime = reduceRuntime(state.runtime, { type: "tool_warning", message: `${trace.tool_name || "只读工具"} 已使用确定性降级` });
+          }
+          if (trace.kind === "provider_fallback") {
+            state.runtime = reduceRuntime(state.runtime, {
+              type: "tool_warning",
+              message: `${trace.configured_provider || "远程模型"} 不可用，本轮已切换离线确定性模式`,
+            });
           }
           setRuntime(state.runtime, `${STAGE_LABELS[trace.node] || "工作流"} · ${trace.kind === "start" ? "运行中" : trace.kind === "end" ? "已完成" : "审计事件"}`);
         } else if (message.type === "result") {
@@ -883,13 +1263,13 @@ if (typeof document !== "undefined") {
           setError(message.message || "运行失败，请稍后重试。");
           source.close();
           if (state.eventSource === source) state.eventSource = null;
-          if (button) button.disabled = false;
+          setFormRunning(false);
         } else if (message.type === "done") {
           const alreadyTerminal = state.runtime.terminal;
           state.runtime = reduceRuntime(state.runtime, { type: "done" });
           source.close();
           if (state.eventSource === source) state.eventSource = null;
-          if (button) button.disabled = false;
+          setFormRunning(false);
           if (!alreadyTerminal) {
             setRuntime(state.runtime, "运行未返回决策结果");
             setError("运行流已结束，但没有收到可展示的决策结果。");
@@ -901,14 +1281,14 @@ if (typeof document !== "undefined") {
         setError("运行结果未通过前端结构校验。");
         source.close();
         if (state.eventSource === source) state.eventSource = null;
-        if (button) button.disabled = false;
+        setFormRunning(false);
       }
     };
     source.onerror = () => {
       if (token !== state.runToken) return;
       source.close();
       if (state.eventSource === source) state.eventSource = null;
-      if (button) button.disabled = false;
+      setFormRunning(false);
       state.runtime = reduceRuntime(state.runtime, { type: "disconnected" });
       if (!state.runtime.terminal || state.runtime.phase === "disconnected") {
         setRuntime(state.runtime, "连接已中断");
@@ -936,12 +1316,35 @@ if (typeof document !== "undefined") {
   }
 
   function boot() {
-    dom("runForm")?.addEventListener("submit", (event) => {
+    const form = dom("runForm");
+    form?.addEventListener("submit", (event) => {
       event.preventDefault();
       startRun();
     });
+    for (const eventName of ["input", "change"]) {
+      form?.addEventListener(eventName, () => {
+        state.formTouched = true;
+        syncFormState(true);
+      });
+    }
+    dom("clearBtn")?.addEventListener("click", clearAll);
+    dom("rerunBtn")?.addEventListener("click", startRun);
+    dom("fullReportLink")?.addEventListener("click", (event) => openReport("full", event));
+    dom("openingReportLink")?.addEventListener("click", (event) => openReport("opening", event));
+    for (const tab of dom("reportDialog")?.querySelectorAll("[data-report-kind]") || []) {
+      tab.addEventListener("click", () => {
+        selectReportKind(tab.dataset.reportKind);
+        loadReport();
+      });
+    }
+    dom("reportRetryBtn")?.addEventListener("click", loadReport);
+    dom("reportDownloadBtn")?.addEventListener("click", downloadReport);
+    dom("jsonDownloadBtn")?.addEventListener("click", downloadCurrentResult);
+    dom("reportCloseBtn")?.addEventListener("click", closeReportDialog);
+    dom("reportDoneBtn")?.addEventListener("click", closeReportDialog);
     setRuntime(state.runtime, "就绪，等待运行");
     resetWorkspace();
+    syncFormState(false);
     checkHealth();
     if (new URLSearchParams(location.search).get("auto") === "1") window.setTimeout(startRun, 300);
   }

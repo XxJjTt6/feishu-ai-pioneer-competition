@@ -31,13 +31,19 @@ class Settings(BaseModel):
     """运行配置。"""
 
     # LLM
-    llm_provider: Literal["offline", "minimax"] = Field(
+    llm_provider: Literal["offline", "minimax", "qwen"] = Field(
         default="offline",
-        description="offline | minimax",
+        description="offline | minimax | qwen",
     )
     minimax_api_key: str = Field(default="")
     minimax_base_url: str = Field(default="https://api.minimax.io/v1")
     minimax_model: str = Field(default="MiniMax-M3")
+    qwen_api_key: str = Field(default="")
+    qwen_base_url: str = Field(
+        default="https://coding.dashscope.aliyuncs.com/v1"
+    )
+    qwen_model: str = Field(default="qwen3.7-plus")
+    qwen_enable_thinking: bool = Field(default=False)
 
     # 媒体
     enable_media: bool = Field(default=False)
@@ -69,13 +75,28 @@ def settings() -> Settings:
     _load_dotenv()
 
     def _bool(name: str, default: bool) -> bool:
-        return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        normalized = raw.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return default
 
     return Settings(
         llm_provider=os.getenv("MINISO_LLM_PROVIDER", "offline").strip().lower(),
         minimax_api_key=os.getenv("MINIMAX_API_KEY", "").strip(),
         minimax_base_url=os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1").strip(),
         minimax_model=os.getenv("MINIMAX_MODEL", "MiniMax-M3").strip(),
+        qwen_api_key=os.getenv("QWEN_API_KEY", "").strip(),
+        qwen_base_url=os.getenv(
+            "QWEN_BASE_URL",
+            "https://coding.dashscope.aliyuncs.com/v1",
+        ).strip(),
+        qwen_model=os.getenv("QWEN_MODEL", "qwen3.7-plus").strip(),
+        qwen_enable_thinking=_bool("QWEN_ENABLE_THINKING", False),
         enable_media=_bool("MINISO_ENABLE_MEDIA", False),
         max_retrieval_iters=int(os.getenv("MINISO_MAX_RETRIEVAL_ITERS", "3")),
         hitl=_bool("MINISO_HITL", False),

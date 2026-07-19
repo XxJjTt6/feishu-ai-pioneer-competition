@@ -6,6 +6,8 @@ from typing import List
 
 from miniso_studio.application.agents.base import Agent
 from miniso_studio.application.graph.state import PipelineState
+from miniso_studio.application.portfolio.dynamic_candidates import category_profile
+from miniso_studio.common.decision_input import DecisionInput
 from miniso_studio.common.models import (
     CandidateEvaluation,
     Evidence,
@@ -61,7 +63,13 @@ class UserProxyAgent(Agent):
                 retrieved = fallback_evidence()
             retrieved_ids = [item.source_id for item in retrieved]
             interviews = [
-                self._interview(persona, concept, retrieved_ids)
+                self._interview(
+                    persona,
+                    concept,
+                    retrieved_ids,
+                    state.decision_input,
+                    legacy_input=state.legacy_input,
+                )
                 for persona in state.personas
             ]
             evaluation = state.candidate_evaluations.get(concept.id) or CandidateEvaluation(
@@ -104,20 +112,43 @@ class UserProxyAgent(Agent):
         return isinstance(value, list) and all(isinstance(item, Evidence) for item in value)
 
     def _build_personas(self, state: PipelineState) -> List[Persona]:
+        decision = state.decision_input
+        profile = category_profile(decision)
+        scenarios = "、".join(profile.scenarios)
         personas: List[Persona] = []
         for index, opportunity in enumerate(state.voc_report.opportunities[:4]):
-            segment = self._segment_for(opportunity.aspect)
+            segment = (
+                f"{decision.target_segment_label}："
+                f"{self._segment_for(opportunity.aspect)}"
+            )
             personas.append(
                 Persona(
                     id=f"P-{index + 1}",
-                    name=f"兴趣消费用户{index + 1}",
+                    name=f"{decision.target_segment_label}镜像{index + 1}",
                     segment=segment,
-                    demographics="18-40 岁，覆盖中国内地与重点海外市场的兴趣消费人群",
-                    ocean=_ocean_from(f"{opportunity.aspect}-{index}"),
-                    behaviors=["会在线上线下比较设计与价格", "购买兼顾自用、轻礼赠或收藏"],
+                    demographics=(
+                        f"面向{decision.target_market_label}的{decision.target_segment_label}，"
+                        f"选购{decision.category_label}时关注{decision.price_label}。"
+                    ),
+                    ocean=_ocean_from(
+                        "-".join(
+                            [
+                                str(decision.product_category),
+                                str(decision.target_segment),
+                                str(decision.target_market),
+                                opportunity.aspect,
+                                str(index),
+                            ]
+                        )
+                    ),
+                    behaviors=[
+                        f"会在{scenarios}比较{decision.category_label}的设计、做工与价格",
+                        f"按{decision.ip_strategy_label}核验权利说明，并兼顾自用、轻礼赠或收藏",
+                    ],
                     pains=[opportunity.statement],
                     derived_from_evidence_ids=opportunity.evidence_ids,
                     summary=(
+                        f"{decision.target_segment_label}在{scenarios}使用{decision.category_label}，"
                         f"最关注{opportunity.aspect}；当前满意度 {opportunity.satisfaction}/10，"
                         f"机会分 {opportunity.opportunity_score}。"
                     ),
@@ -143,14 +174,33 @@ class UserProxyAgent(Agent):
         persona: Persona,
         concept: ProductConcept,
         retrieved_evidence_ids: List[str],
+        decision: DecisionInput,
+        *,
+        legacy_input: bool = False,
     ) -> PersonaInterview:
-        concept_copy = " ".join(
-            [concept.one_liner, concept.value_proposition, *concept.key_features]
-        )
-        visual_fit = any(term in concept_copy for term in ("角色", "设计", "城市", "配色", "IP"))
-        gift_fit = any(term in concept_copy for term in ("礼赠", "礼物", "礼盒", "祝福"))
-        collect_fit = any(term in concept_copy for term in ("收藏", "限定", "编号", "系列"))
-        share_fit = any(term in concept_copy for term in ("分享", "拍照", "展示", "开箱", "话题"))
+        profile = category_profile(decision)
+        scenarios = "、".join(profile.scenarios)
+        if legacy_input:
+            concept_copy = " ".join(
+                [concept.one_liner, concept.value_proposition, *concept.key_features]
+            )
+            visual_fit = any(
+                term in concept_copy for term in ("角色", "设计", "城市", "配色", "IP")
+            )
+            gift_fit = any(term in concept_copy for term in ("礼赠", "礼物", "礼盒", "祝福"))
+            collect_fit = any(term in concept_copy for term in ("收藏", "限定", "编号", "系列"))
+            share_fit = any(term in concept_copy for term in ("分享", "拍照", "展示", "开箱", "话题"))
+        else:
+            # 动态输入只由稳定候选路径形成接受度信号，避免自由文本通过概念文案刷分。
+            path_signals = {
+                "voc_driven": (True, True, False, False),
+                "trend_driven": (True, False, True, True),
+                "whitespace_driven": (False, True, False, True),
+            }
+            visual_fit, gift_fit, collect_fit, share_fit = path_signals.get(
+                concept.path,
+                (False, False, False, False),
+            )
         base_acceptance = {
             "voc_driven": 0.67,
             "trend_driven": 0.72,
@@ -165,43 +215,59 @@ class UserProxyAgent(Agent):
         )
         turns = [
             InterviewTurn(
-                question="你会在什么使用场景中购买或使用它？",
-                answer=f"我会把它用于日常自用，也会关注它是否真正解决：{persona.pains[0]}",
+                question=(
+                    f"围绕“{decision.brief}”，作为{decision.target_segment_label}，"
+                    f"你会在{decision.target_market_label}的"
+                    f"哪些{scenarios}使用场景购买这款{decision.category_label}？"
+                ),
+                answer=(
+                    f"我会在{scenarios}使用这款{profile.form}，并确认它真正解决："
+                    f"{persona.pains[0]}；同时要满足{decision.constraints or '常规零售验收条件'}。"
+                ),
                 sentiment="positive" if acceptance >= 0.65 else "neutral",
             ),
             InterviewTurn(
-                question="你对视觉与 IP 风格有什么偏好？",
+                question=(
+                    f"你对这款{decision.category_label}的视觉与 IP 风格有什么偏好？"
+                ),
                 answer=(
-                    "角色和区域设计有辨识度，但必须说明原创或授权来源。"
+                    f"角色和区域设计要有辨识度，并按{decision.ip_strategy_label}说明权利来源。"
                     if visual_fit
-                    else "功能清楚，但视觉记忆点还不够。"
+                    else f"{decision.category_label}功能清楚，但视觉记忆点还不够。"
                 ),
                 sentiment="positive" if visual_fit else "neutral",
             ),
             InterviewTurn(
-                question="你对这类商品的价格敏感度如何？",
+                question=(
+                    f"作为{decision.target_segment_label}，你对{decision.price_label}的"
+                    f"{decision.category_label}价格敏感度如何？"
+                ),
                 answer=(
-                    "会比较同价位的做工和可重复使用价值，价格透明才愿意下单。"
+                    f"我会比较{decision.price_label}的做工和可重复使用价值，价格透明才愿意下单。"
                     if concept.path != "trend_driven"
-                    else "限定设计可以小幅溢价，但补充件和普通款要保持可负担。"
+                    else f"{decision.price_label}的限定设计可以有差异，但补充件和普通款仍要可负担。"
                 ),
                 sentiment="neutral",
             ),
             InterviewTurn(
-                question="你会把它用于礼赠或收藏吗？",
+                question=(
+                    f"你会在{scenarios}把这款{decision.category_label}用于礼赠或收藏吗？"
+                ),
                 answer=(
-                    "包装体面且系列不重复时，我会送人也会继续收藏。"
+                    f"包装体面且系列不重复时，我会把{profile.noun}送人，也会继续收藏。"
                     if gift_fit or collect_fit
-                    else "目前更像自用品，礼赠和收藏理由需要加强。"
+                    else f"这款{profile.noun}目前更像自用品，礼赠和收藏理由需要加强。"
                 ),
                 sentiment="positive" if gift_fit or collect_fit else "neutral",
             ),
             InterviewTurn(
-                question="它是否值得拍照分享或推荐给朋友？",
+                question=(
+                    f"这款{decision.category_label}在{decision.target_market_label}是否值得拍照分享或推荐？"
+                ),
                 answer=(
-                    "有可展示的细节和城市故事，我愿意拍照分享。"
+                    f"有可展示的细节和场景故事，我愿意向其他{decision.target_segment_label}分享。"
                     if share_fit
-                    else "需要一个更鲜明的开箱或展示瞬间。"
+                    else f"{profile.noun}需要一个更鲜明的开箱或展示瞬间。"
                 ),
                 sentiment="positive" if share_fit else "neutral",
             ),

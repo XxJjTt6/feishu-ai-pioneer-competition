@@ -7,12 +7,12 @@ import threading
 import uuid
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from miniso_studio.application.reporting import (
     PRODUCT_NAME,
@@ -38,6 +38,15 @@ from miniso_studio.application.runner import (
     run_studio,
 )
 from miniso_studio.common.config import settings
+from miniso_studio.common.decision_input import (
+    DecisionInput,
+    IPStrategy,
+    Objective,
+    PriceBand,
+    ProductCategory,
+    TargetMarket,
+    TargetSegment,
+)
 from miniso_studio.common.logging import log
 from miniso_studio.infrastructure.data.loader import EvidenceIdConflictError
 from miniso_studio.infrastructure.llm.gateway import LLMGateway
@@ -117,9 +126,43 @@ _RUNS = _RunStore()
 _SSE_WORKERS = threading.BoundedSemaphore(value=4)
 
 
+class _StreamTicketStore:
+    """把敏感决策正文留在 POST body，SSE URL 只携带一次性随机票据。"""
+
+    def __init__(self, capacity: int = 64):
+        self.capacity = capacity
+        self._tickets: "OrderedDict[str, tuple[DecisionInput, str, Optional[bool]]]" = OrderedDict()
+        self._lock = threading.RLock()
+
+    def issue(
+        self,
+        decision_input: DecisionInput,
+        thread_id: str,
+        hitl: Optional[bool],
+    ) -> str:
+        token = uuid.uuid4().hex
+        with self._lock:
+            self._tickets[token] = (decision_input, thread_id, hitl)
+            while len(self._tickets) > self.capacity:
+                self._tickets.popitem(last=False)
+        return token
+
+    def consume(self, token: str) -> tuple[DecisionInput, str, Optional[bool]] | None:
+        with self._lock:
+            return self._tickets.pop(token, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._tickets.clear()
+
+
+_STREAM_TICKETS = _StreamTicketStore()
+
+
 def _reset_runtime_state() -> None:
     """测试与本地重载使用的显式状态重置入口。"""
     _RUNS.clear()
+    _STREAM_TICKETS.clear()
 
 
 def _new_thread_id() -> str:
@@ -131,6 +174,14 @@ class RunRequest(BaseModel):
 
     brief: Optional[str] = Field(default=None, min_length=1, max_length=500)
     category: Literal["interest_goods"] = "interest_goods"
+    product_category: ProductCategory = "fragrance_accessory"
+    custom_category: str = Field(default="", max_length=40)
+    target_segment: TargetSegment = "young_professional"
+    target_market: TargetMarket = "global"
+    price_band: PriceBand = "mid"
+    ip_strategy: IPStrategy = "original"
+    objectives: List[Objective] = Field(default_factory=lambda: ["emotional", "social"])
+    constraints: str = Field(default="", max_length=300)
     hitl: Optional[bool] = None
     thread_id: Optional[str] = Field(default=None, pattern=THREAD_ID_PATTERN)
 
@@ -140,6 +191,24 @@ class RunRequest(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("brief 不能只包含空白字符")
         return value
+
+    @model_validator(mode="after")
+    def validate_decision_fields(self) -> "RunRequest":
+        self.to_decision_input()
+        return self
+
+    def to_decision_input(self) -> DecisionInput:
+        return DecisionInput(
+            brief=self.brief if self.brief is not None else DEFAULT_BRIEF,
+            product_category=self.product_category,
+            custom_category=self.custom_category,
+            target_segment=self.target_segment,
+            target_market=self.target_market,
+            price_band=self.price_band,
+            ip_strategy=self.ip_strategy,
+            objectives=self.objectives,
+            constraints=self.constraints,
+        )
 
 
 class ResumeRequest(BaseModel):
@@ -181,7 +250,7 @@ def run(req: Optional[RunRequest] = None) -> dict:
         try:
             artifacts = run_studio(
                 category=request.category,
-                brief=request.brief or DEFAULT_BRIEF,
+                decision_input=request.to_decision_input(),
                 hitl=request.hitl,
                 thread_id=thread_id,
                 reservation=reservation,
@@ -237,15 +306,60 @@ def _sse_payload(item: dict) -> str:
     return f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n"
 
 
+@app.post("/api/stream/ticket")
+def create_stream_ticket(req: RunRequest) -> dict:
+    thread_id = req.thread_id or _new_thread_id()
+    token = _STREAM_TICKETS.issue(
+        req.to_decision_input(),
+        thread_id,
+        req.hitl,
+    )
+    return {
+        "thread_id": thread_id,
+        "stream_url": f"api/stream?ticket={token}",
+    }
+
+
 @app.get("/api/stream")
 def stream(
-    brief: str = Query(DEFAULT_BRIEF, min_length=1, max_length=500),
-    hitl: Optional[bool] = Query(default=None),
-    thread_id: Optional[str] = Query(default=None, pattern=THREAD_ID_PATTERN),
+    ticket: Annotated[Optional[str], Query(pattern=r"^[a-f0-9]{32}$")] = None,
+    brief: Annotated[str, Query(min_length=1, max_length=500)] = DEFAULT_BRIEF,
+    product_category: ProductCategory = "fragrance_accessory",
+    custom_category: Annotated[str, Query(max_length=40)] = "",
+    target_segment: TargetSegment = "young_professional",
+    target_market: TargetMarket = "global",
+    price_band: PriceBand = "mid",
+    ip_strategy: IPStrategy = "original",
+    objectives: Annotated[Optional[List[Objective]], Query()] = None,
+    constraints: Annotated[str, Query(max_length=300)] = "",
+    hitl: Optional[bool] = None,
+    thread_id: Annotated[Optional[str], Query(pattern=THREAD_ID_PATTERN)] = None,
 ) -> StreamingResponse:
     """EventSource 兼容 SSE：trace 后输出一个 result/error，再输出 done。"""
-    if not brief.strip():
-        raise HTTPException(status_code=422, detail="brief 不能只包含空白字符")
+    selected_thread_id = thread_id or _new_thread_id()
+    selected_hitl = hitl
+    if ticket is not None:
+        staged = _STREAM_TICKETS.consume(ticket)
+        if staged is None:
+            raise HTTPException(status_code=404, detail="SSE 票据不存在或已消费")
+        decision_input, selected_thread_id, selected_hitl = staged
+    else:
+        if not brief.strip():
+            raise HTTPException(status_code=422, detail="brief 不能只包含空白字符")
+        try:
+            decision_input = DecisionInput(
+                brief=brief,
+                product_category=product_category,
+                custom_category=custom_category,
+                target_segment=target_segment,
+                target_market=target_market,
+                price_band=price_band,
+                ip_strategy=ip_strategy,
+                objectives=objectives if objectives is not None else ["emotional", "social"],
+                constraints=constraints,
+            )
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail="决策输入不合法") from exc
     if not _SSE_WORKERS.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="SSE 执行槽已满，请稍后重试")
 
@@ -263,7 +377,6 @@ def stream(
     reservation = None
     run_registered = False
     try:
-        selected_thread_id = thread_id or _new_thread_id()
         tracer = Tracer()
         run_id = tracer.run_id
         events: "queue.Queue[dict]" = queue.Queue(maxsize=SSE_QUEUE_CAPACITY)
@@ -341,8 +454,8 @@ def stream(
         try:
             try:
                 artifacts = run_studio(
-                    brief=brief,
-                    hitl=hitl,
+                    decision_input=decision_input,
+                    hitl=selected_hitl,
                     thread_id=selected_thread_id,
                     tracer=tracer,
                     reservation=reservation,

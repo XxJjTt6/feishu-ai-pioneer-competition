@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from miniso_studio.application.agents.base import Agent
 from miniso_studio.application.graph.state import PipelineState
+from miniso_studio.application.portfolio.dynamic_candidates import (
+    build_dynamic_portfolio,
+)
 from miniso_studio.application.scoring.hit_score import build_scorecard
 from miniso_studio.common.models import (
     CandidateEvaluation,
@@ -31,12 +34,12 @@ class ProductManagerAgent(Agent):
         state.revision_context = revision_context
         trends = state.market_intel.trends if state.market_intel else []
         white_space = state.market_intel.white_space_opportunities if state.market_intel else []
+
         def fallback_portfolio():
-            return build_candidate_portfolio(
-                state.category,
-                voc.opportunities,
+            return build_dynamic_portfolio(
+                state.decision_input,
+                [*voc.opportunities, *white_space],
                 trends,
-                white_space,
                 revision_context=revision_context,
             )
 
@@ -51,6 +54,8 @@ class ProductManagerAgent(Agent):
             revision_context=revision_context,
         )
         if not self._valid_portfolio(concepts, revision_context):
+            concepts = fallback_portfolio()
+        elif not state.legacy_input:
             concepts = fallback_portfolio()
 
         state.concepts = concepts

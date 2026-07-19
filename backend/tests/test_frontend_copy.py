@@ -65,7 +65,7 @@ def _chrome_dump(page: Path, tmp_path: Path, width: int, height: int) -> tuple[s
                 "--allow-file-access-from-files",
                 f"--user-data-dir={tmp_path / 'chrome-profile'}",
                 f"--window-size={width},{height}",
-                "--virtual-time-budget=1500",
+                "--virtual-time-budget=700",
                 "--dump-dom",
                 page.as_uri(),
             ],
@@ -220,6 +220,17 @@ def _mock_view() -> dict:
         "elapsed_seconds": 0.5,
         "provider": "offline",
         "target_brand": "MINISO",
+        "decision_input": {
+            "brief": "测试动态输入",
+            "product_category": "fragrance_accessory",
+            "custom_category": "",
+            "target_segment": "young_professional",
+            "target_market": "global",
+            "price_band": "mid",
+            "ip_strategy": "original",
+            "objectives": ["emotional", "social"],
+            "constraints": "",
+        },
         "data_provenance": {
             "review_scope": "synthetic_demo",
             "review_count": 400,
@@ -349,6 +360,231 @@ def test_frontend_contract_exposes_accessible_control_and_all_stages() -> None:
     assert "hitl=false" in js
     assert 'role="tabpanel"' in html
     assert "aria-controls" in js
+
+
+def test_dynamic_decision_form_exposes_all_contract_fields_and_real_actions() -> None:
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/app.js").read_text(encoding="utf-8")
+
+    brief = re.search(r"<(?:input|textarea)\b[^>]*\bid=[\"']brief[\"'][^>]*>", html)
+    assert brief
+    assert not re.search(r"\bvalue\s*=", brief.group(0))
+    assert re.search(r"\bid=[\"']runBtn[\"'][^>]*\bdisabled\b", html)
+    for field in (
+        "brief",
+        "product_category",
+        "custom_category",
+        "target_segment",
+        "target_market",
+        "price_band",
+        "ip_strategy",
+        "objectives",
+        "constraints",
+    ):
+        assert f'name="{field}"' in html
+    for value in (
+        "plush",
+        "fragrance_accessory",
+        "stationery",
+        "home_storage",
+        "beauty_tool",
+        "digital_accessory",
+        "other",
+        "student",
+        "young_professional",
+        "ip_fan",
+        "gift",
+        "family",
+        "collector",
+        "china",
+        "southeast_asia",
+        "japan_korea",
+        "europe_america",
+        "middle_east",
+        "global",
+        "entry",
+        "mid",
+        "premium",
+        "original",
+        "licensed",
+        "none",
+        "evaluate",
+        "emotional",
+        "social",
+        "margin",
+        "supply_chain",
+        "localization",
+    ):
+        assert f'value="{value}"' in html
+    assert re.search(r"<label[^>]+for=[\"']constraints[\"']", html)
+    assert 'maxlength="300"' in html
+    assert 'id="briefCount"' in html
+    assert 'id="constraintsCount"' in html
+    assert 'id="clearBtn"' in html and 'title="清空并复位"' in html
+    assert "使用当前条件再次运行" in html
+    assert html.count("<dialog") >= 1
+    assert "api/report?run_id=" in js
+    assert "new Blob" in js
+    for function_name in ("readDecisionInput", "validateDecisionInput", "buildStreamUrl"):
+        assert function_name in js
+
+
+def test_decision_input_helpers_validate_and_build_repeated_objective_query() -> None:
+    script = r"""
+const app = require('./frontend/app.js');
+
+function formFrom(values) {
+  const controls = Object.fromEntries(Object.entries(values).map(([name, value]) => [
+    name,
+    Array.isArray(value)
+      ? value.map((item) => ({ value: item, checked: true }))
+      : { value },
+  ]));
+  return {
+    elements: {
+      namedItem(name) { return controls[name] || null; },
+    },
+    querySelectorAll(selector) {
+      return selector === '[name="objectives"]:checked' ? controls.objectives : [];
+    },
+  };
+}
+
+const form = formFrom({
+  brief: '  情绪价值新品  ',
+  product_category: 'other',
+  custom_category: '  旅行配件  ',
+  target_segment: 'young_professional',
+  target_market: 'global',
+  price_band: 'mid',
+  ip_strategy: 'evaluate',
+  objectives: ['emotional', 'social'],
+  constraints: '  供应链优先  ',
+});
+const input = app.readDecisionInput(form);
+const validation = app.validateDecisionInput(input);
+const parsed = new URL(app.buildStreamUrl(input, 'thread-safe-1'), 'https://example.test/');
+
+const invalid = app.validateDecisionInput({
+  brief: '',
+  product_category: 'other',
+  custom_category: '',
+  target_segment: 'unknown',
+  target_market: 'global',
+  price_band: 'mid',
+  ip_strategy: 'evaluate',
+  objectives: ['emotional', 'social', 'margin', 'supply_chain', 'localization'],
+  constraints: 'x'.repeat(301),
+});
+
+console.log(JSON.stringify({
+  input,
+  valid: validation.valid,
+  errors: validation.errors,
+  path: parsed.pathname,
+  brief: parsed.searchParams.get('brief'),
+  category: parsed.searchParams.get('product_category'),
+  customCategory: parsed.searchParams.get('custom_category'),
+  objectives: parsed.searchParams.getAll('objectives'),
+  constraints: parsed.searchParams.get('constraints'),
+  threadId: parsed.searchParams.get('thread_id'),
+  hitl: parsed.searchParams.get('hitl'),
+  invalidValid: invalid.valid,
+  invalidErrorKeys: Object.keys(invalid.errors).sort(),
+}));
+"""
+
+    result = _node(script)
+
+    assert result == {
+        "input": {
+            "brief": "情绪价值新品",
+            "product_category": "other",
+            "custom_category": "旅行配件",
+            "target_segment": "young_professional",
+            "target_market": "global",
+            "price_band": "mid",
+            "ip_strategy": "evaluate",
+            "objectives": ["emotional", "social"],
+            "constraints": "供应链优先",
+        },
+        "valid": True,
+        "errors": {},
+        "path": "/api/stream",
+        "brief": "情绪价值新品",
+        "category": "other",
+        "customCategory": "旅行配件",
+        "objectives": ["emotional", "social"],
+        "constraints": "供应链优先",
+        "threadId": "thread-safe-1",
+        "hitl": "false",
+        "invalidValid": False,
+        "invalidErrorKeys": [
+            "brief",
+            "constraints",
+            "custom_category",
+            "objectives",
+            "target_segment",
+        ],
+    }
+
+
+def test_frontend_posts_sensitive_input_before_opening_ticket_only_sse_url() -> None:
+    script = r"""
+const app = require('./frontend/app.js');
+const calls = [];
+const input = {
+  brief: '未公开新品简报',
+  product_category: 'other',
+  custom_category: '旅行收纳配件',
+  target_segment: 'young_professional',
+  target_market: 'global',
+  price_band: 'mid',
+  ip_strategy: 'original',
+  objectives: ['margin'],
+  constraints: '六周内交付',
+};
+const fakeFetch = async (url, options) => {
+  calls.push({ url, options });
+  return {
+    ok: true,
+    json: async () => ({
+      thread_id: 'thread-ticket-1',
+      stream_url: 'api/stream?ticket=' + 'b'.repeat(32),
+    }),
+  };
+};
+(async () => {
+  const ticket = await app.createStreamTicket(input, 'thread-ticket-1', fakeFetch);
+  console.log(JSON.stringify({
+    url: calls[0].url,
+    method: calls[0].options.method,
+    body: JSON.parse(calls[0].options.body),
+    streamUrl: ticket.stream_url,
+    leaksBrief: ticket.stream_url.includes(input.brief),
+  }));
+})();
+"""
+
+    result = _node(script)
+
+    assert result["url"] == "api/stream/ticket"
+    assert result["method"] == "POST"
+    assert result["body"] == {
+        "brief": "未公开新品简报",
+        "product_category": "other",
+        "custom_category": "旅行收纳配件",
+        "target_segment": "young_professional",
+        "target_market": "global",
+        "price_band": "mid",
+        "ip_strategy": "original",
+        "objectives": ["margin"],
+        "constraints": "六周内交付",
+        "thread_id": "thread-ticket-1",
+        "hitl": False,
+    }
+    assert result["streamUrl"] == "api/stream?ticket=" + "b" * 32
+    assert result["leaksBrief"] is False
 
 
 def test_frontend_uses_dom_text_and_safe_urls_for_untrusted_data() -> None:
@@ -589,15 +825,29 @@ def test_real_browser_second_run_resets_workspace_ignores_stale_stream_and_links
     prelude = """
 <script>
 window.__streams = [];
-window.fetch = async () => ({
-  ok: true,
-  json: async () => ({ effective_provider: 'offline' }),
-});
+window.__ticketThreads = [];
+window.fetch = async (url, options = {}) => {
+  if (String(url).includes('api/stream/ticket')) {
+    const request = JSON.parse(options.body);
+    window.__ticketThreads.push(request.thread_id);
+    return {
+      ok: true,
+      json: async () => ({
+        thread_id: request.thread_id,
+        stream_url: 'api/stream?ticket=' + 'a'.repeat(32),
+      }),
+    };
+  }
+  return {
+    ok: true,
+    json: async () => ({ effective_provider: 'offline' }),
+  };
+};
 window.EventSource = class FakeEventSource {
   constructor(url) {
     this.url = url;
     this.closed = false;
-    this.threadId = new URL(url, location.href).searchParams.get('thread_id');
+    this.threadId = window.__ticketThreads.shift() || '';
     window.__streams.push(this);
   }
   close() { this.closed = true; }
@@ -618,7 +868,7 @@ window.EventSource = class FakeEventSource {
 """
     probe = f"""
 <script>
-window.addEventListener('load', () => {{
+window.addEventListener('load', async () => {{
   const firstView = {first_payload};
   const secondView = JSON.parse(JSON.stringify(firstView));
   secondView.run_id = 'run-second';
@@ -629,11 +879,13 @@ window.addEventListener('load', () => {{
   const brief = document.getElementById('brief');
   brief.value = '第一轮';
   form.dispatchEvent(new Event('submit', {{ bubbles: true, cancelable: true }}));
+  await new Promise((resolve) => setTimeout(resolve, 0));
   const first = window.__streams[0];
   first.emit({{ type: 'result', view: firstView }});
 
   brief.value = '第二轮';
   form.dispatchEvent(new Event('submit', {{ bubbles: true, cancelable: true }}));
+  await new Promise((resolve) => setTimeout(resolve, 0));
   const resetWorked =
     document.body.dataset.phase === 'running' &&
     document.getElementById('candidateCount').textContent === '0 个候选' &&
@@ -648,7 +900,10 @@ window.addEventListener('load', () => {{
   window.setTimeout(() => {{
     document.body.dataset.sources = String(window.__streams.length);
     document.body.dataset.firstClosed = String(first.closed);
-    document.body.dataset.explicitHitl = String(second.url.includes('hitl=false'));
+    document.body.dataset.ticketOnly = String(
+      second.url.startsWith('api/stream?ticket=') &&
+      second.url.length === 'api/stream?ticket='.length + 32
+    );
     document.body.dataset.boundThread = String(Boolean(second.threadId));
     document.body.dataset.reset = String(resetWorked);
     document.body.dataset.finalWinner = document.querySelector('[data-testid="winner-name"]')?.textContent || '';
@@ -670,9 +925,112 @@ window.addEventListener('load', () => {{
     assert 'data-probe="ready"' in attrs
     assert 'data-sources="2"' in attrs
     assert 'data-first-closed="true"' in attrs
-    assert 'data-explicit-hitl="true"' in attrs
+    assert 'data-ticket-only="true"' in attrs
     assert 'data-bound-thread="true"' in attrs
     assert 'data-reset="true"' in attrs
     assert 'data-final-winner="第二轮榜首"' in attrs
     assert 'data-report="api/report?run_id=run-second&amp;kind=full"' in attrs
     assert 'data-button-enabled="true"' in attrs
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="本机未安装 Google Chrome")
+def test_real_browser_dynamic_form_report_dialog_downloads_and_clear(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    static = site / "static"
+    shutil.copytree(ROOT / "frontend", static)
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    payload = json.dumps(_mock_view(), ensure_ascii=False).replace("</", "<\\/")
+    prelude = r"""
+<script>
+window.__fetches = [];
+window.__downloads = [];
+window.__blobs = [];
+window.fetch = async (url) => {
+  const value = String(url);
+  window.__fetches.push(value);
+  if (value.includes('api/health')) return {
+    ok: true,
+    json: async () => ({ effective_provider: 'qwen' }),
+    text: async () => '',
+  };
+  return {
+    ok: true,
+    json: async () => ({}),
+    text: async () => JSON.stringify({ markdown: '# 动态报告\n\n本轮内容' }),
+  };
+};
+URL.createObjectURL = (blob) => {
+  window.__blobs.push({ type: blob.type, size: blob.size });
+  return `blob:trend2sku-${window.__blobs.length}`;
+};
+URL.revokeObjectURL = () => {};
+HTMLAnchorElement.prototype.click = function click() {
+  if (this.download) window.__downloads.push(this.download);
+};
+</script>
+"""
+    probe = f"""
+<script>
+window.addEventListener('load', () => {{
+  const runButton = document.getElementById('runBtn');
+  const brief = document.getElementById('brief');
+  const initiallyDisabled = runButton.disabled;
+  brief.value = '用户输入驱动的动态新品';
+  brief.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  const enabledAfterInput = !runButton.disabled;
+
+  window.Trend2SKUApp.renderViewForTest({payload});
+  document.getElementById('fullReportLink').dispatchEvent(
+    new MouseEvent('click', {{ bubbles: true, cancelable: true }})
+  );
+
+  window.setTimeout(() => {{
+    const dialog = document.getElementById('reportDialog');
+    const dialogWasOpen = Boolean(dialog.open || dialog.hasAttribute('open'));
+    const markdown = document.getElementById('reportMarkdown').textContent;
+    document.getElementById('reportDownloadBtn').click();
+    document.getElementById('jsonDownloadBtn').click();
+    document.getElementById('clearBtn').click();
+    window.setTimeout(() => {{
+      document.body.dataset.initialDisabled = String(initiallyDisabled);
+      document.body.dataset.enabledAfterInput = String(enabledAfterInput);
+      document.body.dataset.dialogOpened = String(dialogWasOpen);
+      document.body.dataset.markdown = markdown;
+      document.body.dataset.reportFetch = window.__fetches.find((url) => url.includes('api/report')) || '';
+      document.body.dataset.downloads = window.__downloads.join('|');
+      document.body.dataset.blobTypes = window.__blobs.map((blob) => blob.type).join('|');
+      document.body.dataset.clearedBrief = document.getElementById('brief').value;
+      document.body.dataset.clearedCandidates = document.getElementById('candidateCount').textContent;
+      document.body.dataset.disabledAfterClear = String(document.getElementById('runBtn').disabled);
+      document.body.dataset.probe = 'ready';
+    }}, 20);
+  }}, 80);
+}});
+</script>
+"""
+    html = html.replace(
+        '<script src="static/app.js" defer></script>',
+        prelude + '<script src="static/app.js" defer></script>',
+    )
+    (site / "index.html").write_text(
+        html.replace("</body>", probe + "</body>"), encoding="utf-8"
+    )
+
+    stdout, stderr = _chrome_dump(site / "index.html", tmp_path, 390, 844)
+
+    body = re.search(r"<body\b([^>]*)>", stdout)
+    assert body, stderr
+    attrs = body.group(1)
+    assert 'data-probe="ready"' in attrs
+    assert 'data-initial-disabled="true"' in attrs
+    assert 'data-enabled-after-input="true"' in attrs
+    assert 'data-dialog-opened="true"' in attrs
+    assert 'data-markdown="# 动态报告' in attrs
+    assert 'data-report-fetch="api/report?run_id=run-browser-test&amp;kind=full"' in attrs
+    assert "trend2sku-run-browser-test-full.md" in attrs
+    assert "trend2sku-run-browser-test-result.json" in attrs
+    assert "text/markdown;charset=utf-8" in attrs
+    assert "application/json;charset=utf-8" in attrs
+    assert 'data-cleared-brief=""' in attrs
+    assert 'data-cleared-candidates="0 个候选"' in attrs
+    assert 'data-disabled-after-clear="true"' in attrs

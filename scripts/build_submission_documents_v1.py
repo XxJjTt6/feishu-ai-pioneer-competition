@@ -30,7 +30,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = ROOT / "docs" / "开题报告补充材料.md"
-DEFAULT_OUTPUT = ROOT / "deliverables" / "名创优品_开题报告补充材料_v1.docx"
+DEFAULT_OUTPUT = ROOT / "deliverables" / "名创优品_开题报告补充材料_v2.docx"
 ASSET_DIR = ROOT / "frontend" / "assets" / "miniso-v1"
 
 PAGE_WIDTH_DXA = 9360
@@ -109,8 +109,6 @@ def sanitize_line(line: str, page_number: int) -> str | None:
             "代码再分发还须通过第 16 页授权阻断确认。",
             "代码资产公开分发前仍须完成权属与许可证核验。",
         )
-        line = line.replace("。代码资产公开", "代码资产公开")
-
     return line.rstrip()
 
 
@@ -228,8 +226,8 @@ def configure_document(doc: DocumentObject) -> None:
 
     doc.core_properties.title = "Trend2SKU 开题报告补充材料"
     doc.core_properties.subject = "名创优品 AI 驱动的产品开发智能决策引擎"
-    doc.core_properties.author = ""
-    doc.core_properties.last_modified_by = ""
+    doc.core_properties.author = "Saber"
+    doc.core_properties.last_modified_by = "Saber"
     doc.core_properties.keywords = "Trend2SKU, MINISO, Agent, 产品决策"
     doc.core_properties.comments = ""
 
@@ -656,6 +654,8 @@ def add_section(doc: DocumentObject, section: Section, page_number: int, bullet_
 
 
 def build(source: Path, output: Path) -> Path:
+    if output.exists():
+        raise FileExistsError(f"refusing to overwrite existing document: {output}")
     sections = parse_sections(source)
     doc = Document()
     configure_document(doc)

@@ -5,10 +5,12 @@
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from miniso_studio.common.config import DEFAULT_BRIEF
+from miniso_studio.common.decision_input import DecisionInput
 from miniso_studio.common.models import (
     CandidateEvaluation,
     CandidateRevisionContext,
@@ -34,7 +36,11 @@ class PipelineState(BaseModel):
     # 输入
     category: str = "interest_goods"
     target_brand: str = "MINISO"
-    brief: str = ""
+    brief: str = DEFAULT_BRIEF
+    decision_input: DecisionInput = Field(
+        default_factory=lambda: DecisionInput(brief=DEFAULT_BRIEF)
+    )
+    legacy_input: bool = False
 
     # 数据
     target_evidences: List[Evidence] = Field(default_factory=list)
@@ -72,6 +78,24 @@ class PipelineState(BaseModel):
     trace_run_id: str = ""
     hitl_enabled: bool = False
     run_elapsed_seconds: float = 0.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def synchronize_decision_input(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        raw_decision_input = normalized.get("decision_input")
+        if raw_decision_input is None:
+            decision_input = DecisionInput(
+                brief=normalized.get("brief", DEFAULT_BRIEF)
+            )
+            normalized["legacy_input"] = normalized.get("legacy_input", True)
+        else:
+            decision_input = DecisionInput.model_validate(raw_decision_input)
+        normalized["decision_input"] = decision_input
+        normalized["brief"] = decision_input.brief
+        return normalized
 
     def add_claim(self, text: str, evidence_ids: List[str]) -> None:
         self.claims.append((text, list(evidence_ids or [])))

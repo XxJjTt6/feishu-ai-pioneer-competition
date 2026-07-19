@@ -18,6 +18,48 @@ DEMO_NOTICE = (
     "400 条固定种子合成离线演示，不是企业内部数据或真实用户评论，不代表爆款概率/销售/ROI"
 )
 
+_DECISION_LABELS = {
+    "product_category": {
+        "plush": "毛绒",
+        "fragrance_accessory": "香氛配饰",
+        "stationery": "文创文具",
+        "home_storage": "家居收纳",
+        "beauty_tool": "美妆工具",
+        "digital_accessory": "数码配件",
+        "other": "其他",
+    },
+    "target_segment": {
+        "student": "学生",
+        "young_professional": "年轻白领",
+        "ip_fan": "IP 粉丝",
+        "gift": "礼赠用户",
+        "family": "亲子家庭",
+        "collector": "收藏用户",
+    },
+    "target_market": {
+        "china": "中国内地",
+        "southeast_asia": "东南亚",
+        "japan_korea": "日韩",
+        "europe_america": "欧美",
+        "middle_east": "中东",
+        "global": "全球",
+    },
+    "price_band": {"entry": "入门价格带", "mid": "主流价格带", "premium": "进阶价格带"},
+    "ip_strategy": {
+        "original": "原创",
+        "licensed": "授权 IP",
+        "none": "无 IP",
+        "evaluate": "待评估",
+    },
+    "objectives": {
+        "emotional": "情绪价值",
+        "social": "社交传播",
+        "margin": "毛利",
+        "supply_chain": "供应链",
+        "localization": "本地化",
+    },
+}
+
 
 def _dump(value: Any) -> Any:
     return value.model_dump(mode="json") if value is not None else None
@@ -25,6 +67,48 @@ def _dump(value: Any) -> Any:
 
 def _dedup(values: Iterable[str]) -> List[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def _md_inline(value: Any) -> str:
+    text = " ".join(str(value or "").replace("\r", "\n").splitlines())
+    for marker in ("\\", "`", "*", "_", "{", "}", "[", "]", "<", ">", "#", "|"):
+        text = text.replace(marker, f"\\{marker}")
+    return text
+
+
+def _decision_input_lines(decision: dict) -> List[str]:
+    category = decision.get("custom_category") or _DECISION_LABELS["product_category"].get(
+        decision.get("product_category", ""), decision.get("product_category", "")
+    )
+    segment = _DECISION_LABELS["target_segment"].get(
+        decision.get("target_segment", ""), decision.get("target_segment", "")
+    )
+    market = _DECISION_LABELS["target_market"].get(
+        decision.get("target_market", ""), decision.get("target_market", "")
+    )
+    price = _DECISION_LABELS["price_band"].get(
+        decision.get("price_band", ""), decision.get("price_band", "")
+    )
+    ip_strategy = _DECISION_LABELS["ip_strategy"].get(
+        decision.get("ip_strategy", ""), decision.get("ip_strategy", "")
+    )
+    objectives = "、".join(
+        _DECISION_LABELS["objectives"].get(value, value)
+        for value in decision.get("objectives", [])
+    )
+    constraints = decision.get("constraints") or "无额外约束"
+    return [
+        "## 本轮决策输入",
+        "",
+        f"- **决策简报**：{_md_inline(decision.get('brief', ''))}",
+        f"- **商品品类**：{_md_inline(category)}",
+        f"- **目标人群**：{_md_inline(segment)}",
+        f"- **目标市场**：{_md_inline(market)}",
+        f"- **价格带**：{_md_inline(price)}",
+        f"- **IP 策略**：{_md_inline(ip_strategy)}",
+        f"- **优化目标**：{_md_inline(objectives)}",
+        f"- **业务约束**：{_md_inline(constraints)}",
+    ]
 
 
 def build_data_provenance(art: RunArtifacts) -> dict:
@@ -226,6 +310,8 @@ def to_view(art: RunArtifacts) -> dict:
     quality_by_candidate: Dict[str, Any] = {}
     for concept in state.concepts:
         evaluation = state.candidate_evaluations.get(concept.id)
+        if evaluation is not None and evaluation.concept_id != concept.id:
+            raise ValueError("候选与验证结果未按 concept_id 联动")
         interviews = list(evaluation.interviews) if evaluation is not None else []
         average_acceptance = (
             round(sum(item.acceptance for item in interviews) / len(interviews), 4)
@@ -308,7 +394,9 @@ def to_view(art: RunArtifacts) -> dict:
         "provider": art.effective_provider,
         "configured_provider": art.configured_provider,
         "effective_provider": art.effective_provider,
+        "model": art.model,
         "category": state.category,
+        "decision_input": state.decision_input.model_dump(mode="json"),
         "target_brand": state.target_brand,
         "data_provenance": build_data_provenance(art),
         **visible,
@@ -349,10 +437,12 @@ def render_full_report(art: RunArtifacts) -> str:
         f"> Run ID：`{art.run_id}`　目标品牌：MINISO　品类：`{state.category}`",
         (
             f"> Configured Provider：{art.configured_provider}　"
-            f"Effective Provider：{art.effective_provider}"
+            f"Effective Provider：{art.effective_provider}　Model：{art.model}"
         ),
-        f"> Brief：{state.brief}",
+        f"> Brief：{_md_inline(state.brief)}",
         f"> 数据边界：{view['data_provenance']['disclaimer']}。",
+        "",
+        *_decision_input_lines(view["decision_input"]),
         "",
         "## 1. 2026 公开经营信号与研究假设",
         "",
@@ -367,13 +457,13 @@ def render_full_report(art: RunArtifacts) -> str:
     for rank, card in enumerate(view["scorecards"], 1):
         concept = concepts[card["concept_id"]]
         out.append(
-            f"| {rank} | {concept['name']} (`{concept['id']}`) | {concept['path']} | "
+            f"| {rank} | {_md_inline(concept['name'])} (`{concept['id']}`) | {concept['path']} | "
             f"{card['total_score']:.2f} | {card['recommendation']} |"
         )
     out.extend(
         [
             "",
-            f"**榜首 SKU：{decision['winner_name']} (`{decision['winner_id']}`)**",
+            f"**榜首 SKU：{_md_inline(decision['winner_name'])} (`{decision['winner_id']}`)**",
             f"组合决策：`{decision['verdict']}`，置信度 {decision['confidence']}（离线演示）。",
             f"决策理由：{decision['rationale']}",
         ]
@@ -393,7 +483,7 @@ def render_full_report(art: RunArtifacts) -> str:
     for card in view["scorecards"]:
         for dimension in card["dimensions"]:
             out.append(
-                f"| {concepts[card['concept_id']]['name']} | {dimension['label']} | "
+                f"| {_md_inline(concepts[card['concept_id']]['name'])} | {dimension['label']} | "
                 f"{dimension['weight']:.0%} | {dimension['score']:.2f} | {dimension['rationale']} |"
             )
 
@@ -428,7 +518,7 @@ def render_full_report(art: RunArtifacts) -> str:
     for concept_id, validation in view["launch_validation"]["by_candidate"].items():
         nps = validation["nps"] or {}
         out.append(
-            f"- **{concepts[concept_id]['name']}**：模拟访谈 {len(validation['interviews'])} 次，"
+            f"- **{_md_inline(concepts[concept_id]['name'])}**：模拟访谈 {len(validation['interviews'])} 次，"
             f"平均接受度 {validation['average_acceptance']:.0%}，预测 NPS {nps.get('score', 0):.1f}。"
         )
     out.append(f"> {view['launch_validation']['disclaimer']}")
@@ -436,14 +526,15 @@ def render_full_report(art: RunArtifacts) -> str:
     out.extend(["", "## 6. 商品风险与决策条件", ""])
     for concept_id, assessment in view["quality_audit"]["by_candidate"].items():
         if assessment is None:
-            out.append(f"- **{concepts[concept_id]['name']}**：尚无商品可行性评估。")
+            out.append(f"- **{_md_inline(concepts[concept_id]['name'])}**：尚无商品可行性评估。")
             continue
         risks = assessment.get("risks", [])
         risk_copy = "；".join(
-            f"[{risk['severity']}] {risk['description']} -> {risk['mitigation']}" for risk in risks
+            f"[{risk['severity']}] {_md_inline(risk['description'])} -> {_md_inline(risk['mitigation'])}"
+            for risk in risks
         ) or "未识别到结构化风险"
         out.append(
-            f"- **{concepts[concept_id]['name']}**：毛利 {assessment['gross_margin_score']:.0f}，"
+            f"- **{_md_inline(concepts[concept_id]['name'])}**：毛利 {assessment['gross_margin_score']:.0f}，"
             f"供应链 {assessment['supply_feasibility_score']:.0f}，IP/合规 {assessment['ip_compliance_score']:.0f}，"
             f"全球本地化 {assessment['localization_score']:.0f}；{risk_copy}（均为离线演示评估）。"
         )
@@ -485,12 +576,14 @@ def render_opening_report(art: RunArtifacts) -> str:
     out = [
         f"# {PRODUCT_NAME} 爆款产品决策 Agent · 开题底稿",
         "",
-        f"> Brief：{art.state.brief}",
+        f"> Brief：{_md_inline(art.state.brief)}",
         (
             f"> Configured Provider：{art.configured_provider}　"
-            f"Effective Provider：{art.effective_provider}"
+            f"Effective Provider：{art.effective_provider}　Model：{art.model}"
         ),
         f"> 数据边界：{view['data_provenance']['disclaimer']}。",
+        "",
+        *_decision_input_lines(view["decision_input"]),
         "",
         "## Part 1 命题前置分析与洞察",
         "",
@@ -514,10 +607,11 @@ def render_opening_report(art: RunArtifacts) -> str:
         "",
         f"**4. 可量化预期价值**：本次离线演示生成 {len(view['candidate_skus'])} 个候选，完成 "
         f"{sum(len(item['interviews']) for item in view['launch_validation']['by_candidate'].values())} 次模拟访谈，"
-        f"榜首为 {decision['winner_name']}，八维总分 {view['winner_scorecard']['total_score']:.2f}，"
+        f"榜首为 {_md_inline(decision['winner_name'])}，八维总分 {view['winner_scorecard']['total_score']:.2f}，"
         f"建议 {decision['verdict']}。这些数字仅验证流程可运行，不代表销售、爆款概率或 ROI。",
         "",
-        "**5. 落地可行性与推广性**：离线模式可固定种子复现，在线模式可接入 MiniMax 做文本批判但不改写数值评分；"
+        "**5. 落地可行性与推广性**：离线模式可固定种子复现，在线模式可通过 OpenAI 兼容协议接入 "
+        "qwen3.7-plus 做文本批判但不改写数值评分；"
         "替换品类词典、证据连接器和商品规则即可推广到其他兴趣消费品类，并以小规模试购逐步校准阈值。",
         "",
         "## 2026 官方资料口径",

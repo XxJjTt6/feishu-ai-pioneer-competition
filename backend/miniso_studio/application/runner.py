@@ -19,6 +19,7 @@ from miniso_studio.application.graph.checkpoint import (
 from miniso_studio.application.graph.pipeline import build_studio_graph
 from miniso_studio.application.graph.state import PipelineState
 from miniso_studio.common.config import DEFAULT_BRIEF, settings
+from miniso_studio.common.decision_input import DecisionInput
 from miniso_studio.common.logging import log
 from miniso_studio.common.models import ComparisonReport, RubricScore
 from miniso_studio.infrastructure.data.loader import (
@@ -47,6 +48,7 @@ class RunArtifacts(BaseModel):
     provider: str = "offline"
     configured_provider: str = "offline"
     effective_provider: str = "offline"
+    model: str = "offline-deterministic"
     state: PipelineState
     rubric: Optional[RubricScore] = None
     comparison: Optional[ComparisonReport] = None
@@ -80,6 +82,7 @@ def _artifacts(
         provider=gateway.effective_provider,
         configured_provider=gateway.configured_provider,
         effective_provider=gateway.effective_provider,
+        model=gateway.default_model,
         state=state,
         rubric=rubric,
         comparison=comparison,
@@ -104,13 +107,13 @@ def _persist_pause_elapsed(
 def _finalize(
     state: PipelineState,
     elapsed: float,
-    brief: str,
     gateway: LLMGateway,
     tracer: Tracer,
     thread_id: str,
 ) -> RunArtifacts:
     total_elapsed = round(state.run_elapsed_seconds + elapsed, 3)
     state.run_elapsed_seconds = total_elapsed
+    brief = state.decision_input.brief
     rubric = evaluate(state)
     baseline = run_experience_driven(state.category, brief, gateway)
     comparison = build_comparison(state, baseline, brief)
@@ -139,9 +142,18 @@ def run_studio(
     tracer: Optional[Tracer] = None,
     run_id: Optional[str] = None,
     reservation: Optional[ThreadReservation] = None,
+    *,
+    decision_input: Optional[DecisionInput] = None,
 ) -> RunArtifacts:
     """启动一次独立运行；调用方可显式注入 tracer 或 run_id。"""
-    _validate_input(category, brief, thread_id)
+    if decision_input is None:
+        _validate_input(category, brief, thread_id)
+        normalized_decision_input = DecisionInput(brief=brief)
+        legacy_input = True
+    else:
+        normalized_decision_input = DecisionInput.model_validate(decision_input)
+        _validate_input(category, normalized_decision_input.brief, thread_id)
+        legacy_input = False
     checkpointer = JsonCheckpointer()
     owns_reservation = reservation is None
     active_reservation = reservation or checkpointer.reserve_for_run(thread_id)
@@ -171,7 +183,8 @@ def run_studio(
         state = PipelineState(
             category=category,
             target_brand=TARGET_BRAND,
-            brief=brief,
+            decision_input=normalized_decision_input,
+            legacy_input=legacy_input,
             target_evidences=split["target"],
             competitor_evidences=split["competitors"],
             trace_run_id=tracer.run_id,
@@ -194,7 +207,7 @@ def run_studio(
                 state.run_elapsed_seconds,
                 awaiting_human=True,
             )
-        return _finalize(state, elapsed, brief, gateway, tracer, thread_id)
+        return _finalize(state, elapsed, gateway, tracer, thread_id)
     finally:
         if owns_reservation:
             active_reservation.release()
@@ -270,7 +283,7 @@ def resume_studio(
                 awaiting_human=True,
             )
 
-        artifacts = _finalize(state, elapsed, state.brief, gateway, tracer, thread_id)
+        artifacts = _finalize(state, elapsed, gateway, tracer, thread_id)
         checkpointer.delete_if_checkpoint_id(
             active_reservation,
             snapshot.checkpoint_id,
