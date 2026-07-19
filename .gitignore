@@ -1,0 +1,19 @@
+runs/
+/assets/
+.venv/
+tmp/
+*.zip
+__pycache__/
+*.pyc
+.env
+data/processed/
+.DS_Store
+node_modules/
+
+# latex 中间产物
+docs/report/*.aux
+docs/report/*.log
+docs/report/*.out
+docs/report/*.toc
+docs/report/*.xdv
+docs/report/_probe.*
