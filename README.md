@@ -50,7 +50,7 @@ Trend2SKU 在一次可审计运行中：
 
 ## 快速开始
 
-需要 Python 3.10+。下面以仓库根目录为当前目录：
+需要 Python 3.10+。运行依赖见 [`requirements.txt`](requirements.txt)，合成样本生成器见 [`data/make_sample.py`](data/make_sample.py)。下面以仓库根目录为当前目录：
 
 ```bash
 python3 -m venv .venv
@@ -169,7 +169,7 @@ API 使用 `POST /api/run` 传入 `"hitl": true` 和唯一 `thread_id`，再以 
 
 ## qwen3.7-plus 在线叙述增强
 
-默认 `offline` 不联网、不需要 API Key。在线 Coding Plan 主路径使用 Qwen 的 OpenAI-compatible `POST /chat/completions` 协议，配置示意如下；`QWEN_API_KEY` 仅为占位，可由获授权的运行环境注入，或写入已被 Git 忽略且权限为 `0600` 的本地 `.env`：
+默认 `offline` 不联网、不需要 API Key。在线 Coding Plan 主路径使用 Qwen 的 OpenAI-compatible `POST /chat/completions` 协议，完整配置模板见 [`.env.example`](.env.example)；`QWEN_API_KEY` 仅为占位，可由获授权的运行环境注入，或写入已被 Git 忽略且权限为 `0600` 的本地 `.env`：
 
 ```text
 MINISO_LLM_PROVIDER=qwen
@@ -181,7 +181,7 @@ QWEN_ENABLE_THINKING=false
 
 远程模型只改写或增强叙述，不改候选的确定性数值、八维权重、阈值和严重风险闸口。配置了 `qwen` 但缺少 Key 时，`configured_provider` 保持 `qwen`，`effective_provider` 明确为 `offline`；首个远程请求失败后也会显式熔断并降级为 `offline`，当前流程继续使用确定性结果。`GET /api/health` 可核验配置 provider 与实际 provider，降级事件写入脱敏 trace，不记录 Key、完整提示词或上游响应正文。
 
-本地 `.env` 只用于当前机器运行，必须保持未跟踪且不得进入源码包、MANIFEST、ZIP、日志或截图；交付物只包含无真实值的 `.env.example`。
+本地 `.env` 只用于当前机器运行，必须保持未跟踪且不得进入源码包、MANIFEST、ZIP、日志或截图；交付物只包含无真实值的 [`.env.example`](.env.example)。
 
 MiniMax 仍作为兼容 provider 保留，已有调用方可继续使用 `MINISO_LLM_PROVIDER=minimax` 与现有 `MINIMAX_*` 变量；新接入和在线演示不以 MiniMax 为主路径。
 
@@ -200,18 +200,15 @@ PYTHONPATH=backend .venv/bin/python \
 
 ## 架构与目录
 
-```text
-backend/miniso_studio/
-  starter/          CLI、FastAPI、SSE、HITL 入口
-  application/      状态图、Agent、评分、评测与报告
-  infrastructure/   数据、ABSA、检索、模型网关、trace、媒体适配
-  common/           配置、模型、引用与工具注册表
-frontend/           动态经营决策工作台
-data/               合成样本生成器、processed 数据入口与边界说明
-backend/tests/      单元、契约、并发、迁移和材料测试
-docs/               方法论、报名文案、补充材料、来源与迁移说明
-skills/             兴趣消费 VOC 分析 SOP
-```
+- [`backend/miniso_studio/starter/`](backend/miniso_studio/starter/)：CLI、FastAPI、SSE、HITL 入口。
+- [`backend/miniso_studio/application/`](backend/miniso_studio/application/)：状态图、Agent、评分、评测与报告。
+- [`backend/miniso_studio/infrastructure/`](backend/miniso_studio/infrastructure/)：数据、ABSA、检索、模型网关、trace、媒体适配。
+- [`backend/miniso_studio/common/`](backend/miniso_studio/common/)：配置、模型、引用与工具注册表。
+- [`frontend/`](frontend/)：动态经营决策工作台。
+- [`data/`](data/)：合成样本生成器、processed 数据入口与边界说明。
+- [`backend/tests/`](backend/tests/)：单元、契约、并发、迁移和材料测试。
+- [`docs/`](docs/)：方法论、报名文案、补充材料、来源与迁移说明。
+- [`skills/`](skills/)：兴趣消费 VOC 分析 SOP。
 
 核心状态流：
 
@@ -222,6 +219,8 @@ skills/             兴趣消费 VOC 分析 SOP
 ```
 
 ## 测试与审计
+
+开发依赖见 [`requirements-dev.txt`](requirements-dev.txt)，测试集位于 [`backend/tests/`](backend/tests/)，前端入口为 [`frontend/app.js`](frontend/app.js)，提交前检查脚本为 [`scripts/pre_pr_check.py`](scripts/pre_pr_check.py)。
 
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
@@ -235,21 +234,21 @@ node --check frontend/app.js
 
 ## 资料、打包与合规
 
-- `docs/报名提交材料.md`：满足表单字符限制的 Part 1 / Part 2。
-- `docs/开题报告补充材料.md`：固定 17 页附件内容源。
-- `docs/methodology_whitepaper.md`：三路径、工具、评分、HITL 和校准方法。
-- `docs/ai_vs_experience.md`：同题、同数据、同预算的影子试点设计，不预设 AI 胜出。
-- `docs/references.md`：2026 年官方经营资料与 Agent 一手资料。
-- `docs/迁移说明.md`：固定输入 v1 到动态输入 v2 的兼容、破坏性变化、安全与降级说明。
-- `deliverables/提交清单_v2.md`：逐项执行并留证的未预勾选交付清单。
+- [`docs/报名提交材料.md`](docs/报名提交材料.md)：满足表单字符限制的 Part 1 / Part 2。
+- [`docs/开题报告补充材料.md`](docs/开题报告补充材料.md)：固定 17 页附件内容源。
+- [`docs/methodology_whitepaper.md`](docs/methodology_whitepaper.md)：三路径、工具、评分、HITL 和校准方法。
+- [`docs/ai_vs_experience.md`](docs/ai_vs_experience.md)：同题、同数据、同预算的影子试点设计，不预设 AI 胜出。
+- [`docs/references.md`](docs/references.md)：2026 年官方经营资料与 Agent 一手资料。
+- [`docs/迁移说明.md`](docs/迁移说明.md)：固定输入 v1 到动态输入 v2 的兼容、破坏性变化、安全与降级说明。
+- [`deliverables/提交清单_v2.md`](deliverables/提交清单_v2.md)：逐项执行并留证的交付清单。
 
-源码包使用正向 allowlist 生成，调用方必须传入全新的输出目录：
+源码包由 [`scripts/package_submission_v1.py`](scripts/package_submission_v1.py) 使用正向 allowlist 生成，调用方必须传入全新的输出目录：
 
 ```bash
 .venv/bin/python scripts/package_submission_v1.py \
   --output-dir outputs-trend2sku-v3
 ```
 
-脚本文件名为兼容既有命令而保留，内部包名已升级为 `miniso-ai-product-studio-v2`。打包器拒绝覆盖已有同名目录、ZIP 或校验文件，并排除运行产物、缓存、旧截图/报告、密钥文件和 `docs/superpowers`。
+脚本文件名为兼容既有命令而保留，内部包名已升级为 `miniso-ai-product-studio-v2`。打包器拒绝覆盖已有同名目录、ZIP 或校验文件，并排除运行产物、缓存、旧截图/报告、密钥文件和 [`docs/superpowers/`](docs/superpowers/)。
 
-基线仓库在 2026-07-19 核验时没有检测到许可证文件，GitHub API 返回 `license: null`。公开可读不等于获得开源授权；比赛上传、公开仓库或第三方分发前，必须先完成 `docs/迁移说明.md` 中的授权或独立重写确认。
+基线仓库在 2026-07-19 核验时没有检测到许可证文件，GitHub API 返回 `license: null`。公开可读不等于获得开源授权；比赛上传、公开仓库或第三方分发前，必须先完成 [`docs/迁移说明.md`](docs/迁移说明.md) 中的授权或独立重写确认。
