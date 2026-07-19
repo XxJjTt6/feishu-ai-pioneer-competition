@@ -1,4 +1,4 @@
-# Trend2SKU 爆款产品决策 Agent v2
+# Trend2SKU 爆款产品决策 Agent
 
 > 名创优品「AI 驱动的产品开发智能决策引擎」命题原型：结构化决策输入 -> 趋势感知 -> 动态候选 -> 上市验证。
 
@@ -18,7 +18,7 @@
 
 所有候选总分都是统一规则量表的 `xx/100`，**不是爆款概率**；模拟访谈接受度与模拟 NPS **不是实测购买或真实用户研究**。2026 年官方经营数字只用于说明决策规模与约束，不能直接推导单品需求、销量或 ROI。公开或企业数据接入前必须确认来源条款、授权、隐私和保存期限。
 
-## v2 能做什么
+## Trend2SKU 爆款产品决策 Agent 的核心能力
 
 Trend2SKU 在一次可审计运行中：
 
@@ -36,7 +36,7 @@ Trend2SKU 在一次可审计运行中：
 
 | 字段 | 含义 | 约束或示例 |
 |---|---|---|
-| `brief` | 决策简报 | Web 表单必填，最多 500 字符；旧 API 省略时使用确定性默认值 |
+| `brief` | 决策简报 | Web 表单必填，最多 500 字符；API 省略时使用确定性默认值 |
 | `product_category` | 产品品类 | 毛绒、香氛配饰、文创文具、家居收纳、美妆工具、数码配件或其他 |
 | `custom_category` | 自定义品类 | 最多 40 字符；仅当 `product_category=other` 时必填，否则规范化为空字符串 |
 | `target_segment` | 目标客群 | 学生、年轻职场人、IP 粉丝、礼赠人群、亲子家庭或收藏玩家 |
@@ -63,7 +63,7 @@ PYTHONPATH=backend MINISO_LLM_PROVIDER=offline \
   --brief "生成兼顾情绪价值、社交传播、毛利和全球本地化的候选组合"
 ```
 
-CLI 会打印候选排名，并在 `docs/generated/` 中创建新的版本化 Markdown 报告；若同名文件存在，不会原地覆盖。每次运行的 trace 位于调用方配置的运行目录。生产环境应为报告、trace 和 checkpoint 配置有权限、留存期限与清理策略的持久化存储。
+CLI 会打印候选排名，并在 `docs/generated/` 中创建带运行标识的 Markdown 报告；若同名文件存在，不会原地覆盖。每次运行的 trace 位于调用方配置的运行目录。生产环境应为报告、trace 和 checkpoint 配置有权限、留存期限与清理策略的持久化存储。
 
 ## 浏览器工作台
 
@@ -85,7 +85,7 @@ PYTHONPATH=backend MINISO_LLM_PROVIDER=offline \
 curl -s http://127.0.0.1:8767/api/health
 ```
 
-`POST /api/run` 的完整 v2 请求示例：
+`POST /api/run` 的完整结构化决策请求示例：
 
 ```bash
 curl -s -X POST http://127.0.0.1:8767/api/run \
@@ -183,8 +183,6 @@ QWEN_ENABLE_THINKING=false
 
 本地 `.env` 只用于当前机器运行，必须保持未跟踪且不得进入源码包、MANIFEST、ZIP、日志或截图；交付物只包含无真实值的 [`.env.example`](.env.example)。
 
-MiniMax 仍作为兼容 provider 保留，已有调用方可继续使用 `MINISO_LLM_PROVIDER=minimax` 与现有 `MINIMAX_*` 变量；新接入和在线演示不以 MiniMax 为主路径。
-
 ## 接入经许可的公开评论
 
 数据连接器只接受调用方明确提供的 JSON/JSONL URL。运行前必须确认网站条款、抓取许可、个人信息处理和研究用途：
@@ -206,8 +204,8 @@ PYTHONPATH=backend .venv/bin/python \
 - [`backend/miniso_studio/common/`](backend/miniso_studio/common/)：配置、模型、引用与工具注册表。
 - [`frontend/`](frontend/)：动态经营决策工作台。
 - [`data/`](data/)：合成样本生成器、processed 数据入口与边界说明。
-- [`backend/tests/`](backend/tests/)：单元、契约、并发、迁移和材料测试。
-- [`docs/`](docs/)：方法论、报名文案、补充材料、来源与迁移说明。
+- [`backend/tests/`](backend/tests/)：单元、契约、并发、状态恢复和材料测试。
+- [`docs/`](docs/)：方法论、报名文案、补充材料、来源、安全与运行说明。
 - [`skills/`](skills/)：兴趣消费 VOC 分析 SOP。
 
 核心状态流：
@@ -239,16 +237,9 @@ node --check frontend/app.js
 - [`docs/methodology_whitepaper.md`](docs/methodology_whitepaper.md)：三路径、工具、评分、HITL 和校准方法。
 - [`docs/ai_vs_experience.md`](docs/ai_vs_experience.md)：同题、同数据、同预算的影子试点设计，不预设 AI 胜出。
 - [`docs/references.md`](docs/references.md)：2026 年官方经营资料与 Agent 一手资料。
-- [`docs/迁移说明.md`](docs/迁移说明.md)：固定输入 v1 到动态输入 v2 的兼容、破坏性变化、安全与降级说明。
-- [`deliverables/提交清单_v2.md`](deliverables/提交清单_v2.md)：逐项执行并留证的交付清单。
+- [系统安全与降级说明](docs/迁移说明.md)：输入契约、安全边界、远程模型降级策略与运行限制。
+- [提交执行与验收清单](deliverables/提交清单_v2.md)：逐项执行、验证并留存证据的交付检查表。
 
-源码包由 [`scripts/package_submission_v1.py`](scripts/package_submission_v1.py) 使用正向 allowlist 生成，调用方必须传入全新的输出目录：
+源码交付包使用正向 allowlist 生成；完整命令、MANIFEST、ZIP 校验和解压复验步骤见[提交执行与验收清单](deliverables/提交清单_v2.md)。打包器拒绝覆盖已有同名产物，并排除运行记录、缓存、旧截图、报告、密钥文件和内部设计过程文档。
 
-```bash
-.venv/bin/python scripts/package_submission_v1.py \
-  --output-dir outputs-trend2sku-v3
-```
-
-脚本文件名为兼容既有命令而保留，内部包名已升级为 `miniso-ai-product-studio-v2`。打包器拒绝覆盖已有同名目录、ZIP 或校验文件，并排除运行产物、缓存、旧截图/报告、密钥文件和 [`docs/superpowers/`](docs/superpowers/)。
-
-基线仓库在 2026-07-19 核验时没有检测到许可证文件，GitHub API 返回 `license: null`。公开可读不等于获得开源授权；比赛上传、公开仓库或第三方分发前，必须先完成 [`docs/迁移说明.md`](docs/迁移说明.md) 中的授权或独立重写确认。
+基线仓库在 2026-07-19 核验时没有检测到许可证文件，GitHub API 返回 `license: null`。公开可读不等于获得开源授权；比赛上传、公开仓库或第三方分发前，必须先完成[系统安全与权属说明](docs/迁移说明.md)中的授权或独立重写确认。
