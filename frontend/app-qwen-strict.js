@@ -285,8 +285,8 @@ function validateDecisionInput(rawInput) {
   const constraints = String(input.constraints ?? "").trim();
   const objectives = asArray(input.objectives).map((item) => String(item));
 
-  if (!brief) errors.brief = "请输入决策简报。";
-  else if (brief.length > 500) errors.brief = "决策简报最多 500 字。";
+  if (!brief) errors.brief = "请描述你想做的产品。";
+  else if (brief.length > 500) errors.brief = "产品描述最多 500 字。";
   for (const field of ["product_category", "target_segment", "target_market", "price_band", "ip_strategy"]) {
     if (!DECISION_OPTIONS[field].has(String(input[field] ?? ""))) errors[field] = "请选择有效选项。";
   }
