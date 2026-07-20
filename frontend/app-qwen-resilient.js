@@ -541,7 +541,12 @@ function reduceRuntime(previous, action) {
 
   if (action.type === "run_started") return { ...createRuntimeSnapshot(), phase: "running" };
   if (current.terminal) return next;
-  if (action.type === "result_received") return { ...next, phase: "complete", terminal: true };
+  if (action.type === "result_received") {
+    for (const stage of STAGE_ORDER) {
+      if (next.stages[stage] !== "error") next.stages[stage] = "done";
+    }
+    return { ...next, phase: "complete", terminal: true };
+  }
   if (action.type === "run_error") return { ...next, phase: "error", terminal: true };
   if (action.type === "done") return { ...next, phase: "error", terminal: true };
   if (action.type === "disconnected") return { ...next, phase: "disconnected", terminal: true };
