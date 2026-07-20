@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>Trend2SKU · 名创优品爆款产品决策 Agent</title>
+  <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n1cAAAAASUVORK5CYII=" />
+  <link rel="stylesheet" href="static/styles.css" />
+</head>
+<body data-phase="idle">
+  <a class="skip-link" href="#workspace">跳到经营决策区</a>
+
+  <header class="app-header" data-role="app-header">
+    <div class="header-inner">
+      <div class="header-topline">
+        <div class="product-identity" aria-label="Trend2SKU 产品标识">
+          <span class="wordmark" aria-hidden="true">T2S</span>
+          <div class="identity-copy">
+            <h1>Trend2SKU</h1>
+            <p>名创优品爆款产品决策 Agent</p>
+          </div>
+          <span id="serviceBadge" class="service-badge" data-service="checking">服务检查中</span>
+        </div>
+        <p class="header-context">从经营目标到候选组合，以当前条件生成可追溯决策。</p>
+      </div>
+
+      <form id="runForm" class="decision-form" data-role="run-form" novalidate>
+        <div class="decision-form-grid">
+          <div class="form-field brief-field">
+            <div class="field-heading">
+              <label for="brief">决策简报</label>
+              <span id="briefCount" class="char-count">0/500</span>
+            </div>
+            <textarea
+            id="brief"
+            name="brief"
+            rows="3"
+            maxlength="500"
+            autocomplete="off"
+            required
+            data-request-control
+            aria-describedby="briefCount briefError"
+            placeholder="例如：面向都市年轻人的情绪价值礼赠新品"
+          ></textarea>
+            <span id="briefError" class="field-error" data-error-for="brief"></span>
+          </div>
+
+          <div class="form-field">
+            <label for="productCategory">商品品类</label>
+            <select id="productCategory" name="product_category" data-request-control aria-describedby="productCategoryError">
+              <option value="plush">毛绒玩具</option>
+              <option value="fragrance_accessory">香氛配件</option>
+              <option value="stationery">文具</option>
+              <option value="home_storage">家居收纳</option>
+              <option value="beauty_tool">美妆工具</option>
+              <option value="digital_accessory">数码配件</option>
+              <option value="other">其他</option>
+            </select>
+            <span id="productCategoryError" class="field-error" data-error-for="product_category"></span>
+          </div>
+
+          <div id="customCategoryField" class="form-field" hidden>
+            <label for="customCategory">自定义品类</label>
+            <input id="customCategory" name="custom_category" type="text" maxlength="40" autocomplete="off" data-request-control aria-describedby="customCategoryError" />
+            <span id="customCategoryError" class="field-error" data-error-for="custom_category"></span>
+          </div>
+
+          <div class="form-field">
+            <label for="targetSegment">目标人群</label>
+            <select id="targetSegment" name="target_segment" data-request-control aria-describedby="targetSegmentError">
+              <option value="student">学生</option>
+              <option value="young_professional" selected>年轻职场人</option>
+              <option value="ip_fan">IP 粉丝</option>
+              <option value="gift">礼赠人群</option>
+              <option value="family">家庭用户</option>
+              <option value="collector">收藏爱好者</option>
+            </select>
+            <span id="targetSegmentError" class="field-error" data-error-for="target_segment"></span>
+          </div>
+
+          <div class="form-field">
+            <label for="targetMarket">目标市场</label>
+            <select id="targetMarket" name="target_market" data-request-control aria-describedby="targetMarketError">
+              <option value="china">中国</option>
+              <option value="southeast_asia">东南亚</option>
+              <option value="japan_korea">日韩</option>
+              <option value="europe_america">欧美</option>
+              <option value="middle_east">中东</option>
+              <option value="global" selected>全球</option>
+            </select>
+            <span id="targetMarketError" class="field-error" data-error-for="target_market"></span>
+          </div>
+
+          <fieldset class="form-field segmented-field">
+            <legend>价格带</legend>
+            <div class="segmented-control">
+              <label><input name="price_band" type="radio" value="entry" data-request-control /><span>入门</span></label>
+              <label><input name="price_band" type="radio" value="mid" checked data-request-control /><span>中端</span></label>
+              <label><input name="price_band" type="radio" value="premium" data-request-control /><span>高端</span></label>
+            </div>
+            <span id="priceBandError" class="field-error" data-error-for="price_band"></span>
+          </fieldset>
+
+          <fieldset class="form-field segmented-field ip-field">
+            <legend>IP 策略</legend>
+            <div class="segmented-control four-options">
+              <label><input name="ip_strategy" type="radio" value="original" checked data-request-control /><span>原创</span></label>
+              <label><input name="ip_strategy" type="radio" value="licensed" data-request-control /><span>授权</span></label>
+              <label><input name="ip_strategy" type="radio" value="none" data-request-control /><span>不使用</span></label>
+              <label><input name="ip_strategy" type="radio" value="evaluate" data-request-control /><span>待评估</span></label>
+            </div>
+            <span id="ipStrategyError" class="field-error" data-error-for="ip_strategy"></span>
+          </fieldset>
+
+          <fieldset class="form-field objectives-field">
+            <legend>经营目标 <span>选择 1-4 项</span></legend>
+            <div class="checkbox-options">
+              <label><input name="objectives" type="checkbox" value="emotional" checked data-request-control /><span>情绪价值</span></label>
+              <label><input name="objectives" type="checkbox" value="social" checked data-request-control /><span>社交传播</span></label>
+              <label><input name="objectives" type="checkbox" value="margin" data-request-control /><span>毛利空间</span></label>
+              <label><input name="objectives" type="checkbox" value="supply_chain" data-request-control /><span>供应链</span></label>
+              <label><input name="objectives" type="checkbox" value="localization" data-request-control /><span>本地化</span></label>
+            </div>
+            <span id="objectivesError" class="field-error" data-error-for="objectives"></span>
+          </fieldset>
+
+          <div class="form-field constraints-field">
+            <div class="field-heading">
+              <label for="constraints">约束条件</label>
+              <span id="constraintsCount" class="char-count">0/300</span>
+            </div>
+            <textarea id="constraints" name="constraints" rows="3" maxlength="300" data-request-control aria-describedby="constraintsCount constraintsError" placeholder="可选：成本、交期、材质、合规或区域限制"></textarea>
+            <span id="constraintsError" class="field-error" data-error-for="constraints"></span>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button id="clearBtn" class="icon-button" type="button" title="清空并复位" aria-label="清空并复位">×</button>
+          <button id="rerunBtn" class="secondary-button" type="button" disabled>使用当前条件再次运行</button>
+          <button id="runBtn" class="primary-button" type="submit" disabled>运行 Agent</button>
+        </div>
+      </form>
+    </div>
+  </header>
+
+  <section class="workflow-bar" aria-labelledby="workflowTitle" data-role="workflow">
+    <div class="workflow-inner">
+      <div class="workflow-heading">
+        <h2 id="workflowTitle">Agent 决策链</h2>
+        <div id="runtimeStatus" class="runtime-status" role="status" aria-live="polite" aria-atomic="true">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="runtimeStatusText">就绪，等待运行</span>
+        </div>
+      </div>
+      <ol id="pipeline" class="agent-pipeline" aria-label="七阶段运行状态">
+        <li class="stage-item" data-stage="insight" data-state="pending">
+          <span class="stage-number">01</span><span class="stage-label">需求洞察</span><span class="stage-state">待处理</span>
+        </li>
+        <li class="stage-item" data-stage="trend_radar" data-state="pending">
+          <span class="stage-number">02</span><span class="stage-label">趋势雷达</span><span class="stage-state">待处理</span>
+        </li>
+        <li class="stage-item" data-stage="ideation" data-state="pending">
+          <span class="stage-number">03</span><span class="stage-label">创意工坊</span><span class="stage-state">待处理</span>
+        </li>
+        <li class="stage-item" data-stage="user_mirror" data-state="pending">
+          <span class="stage-number">04</span><span class="stage-label">用户镜像</span><span class="stage-state">待处理</span>
+        </li>
+        <li class="stage-item" data-stage="merchandise_expert" data-state="pending">
+          <span class="stage-number">05</span><span class="stage-label">商品专家</span><span class="stage-state">待处理</span>
+        </li>
+        <li class="stage-item" data-stage="hit_judge" data-state="pending">
+          <span class="stage-number">06</span><span class="stage-label">爆款评审</span><span class="stage-state">待处理</span>
+        </li>
+        <li class="stage-item" data-stage="proposal" data-state="pending">
+          <span class="stage-number">07</span><span class="stage-label">提案生成</span><span class="stage-state">待处理</span>
+        </li>
+      </ol>
+      <div id="runtimeAlert" class="runtime-alert" role="alert" hidden></div>
+      <div id="warningArea" class="warning-area" role="alert" hidden></div>
+    </div>
+  </section>
+
+  <main id="workspace" class="workspace" data-role="workspace">
+    <section class="decision-section" aria-labelledby="decisionTitle">
+      <div class="section-heading decision-heading">
+        <div>
+          <p class="eyebrow">PORTFOLIO DECISION</p>
+          <h2 id="decisionTitle">爆款组合决策台</h2>
+        </div>
+        <p id="provenanceSummary" class="section-note">离线演示数据，运行后生成可追溯结论</p>
+      </div>
+
+      <div class="decision-grid">
+        <article class="panel winner-panel" aria-labelledby="winnerTitle" data-role="winner">
+          <div class="panel-heading compact-heading">
+            <div>
+              <p class="panel-kicker">组合榜首 · 动态摘要</p>
+              <h3 id="winnerTitle">建议优先验证</h3>
+            </div>
+            <span id="winnerVerdict" class="verdict-badge" data-verdict="PENDING">待评审</span>
+          </div>
+          <div id="winnerContent" class="winner-content"></div>
+        </article>
+
+        <section class="panel leaderboard-panel" aria-labelledby="leaderboardTitle">
+          <div class="panel-heading compact-heading">
+            <div>
+              <p class="panel-kicker">RANKING</p>
+              <h3 id="leaderboardTitle">候选 SKU 排行</h3>
+            </div>
+            <span id="candidateCount" class="panel-meta">0 个候选</span>
+          </div>
+          <div id="leaderboard" class="leaderboard" role="tablist" aria-label="候选 SKU 切换"></div>
+        </section>
+
+        <section class="panel score-panel" aria-labelledby="scoreTitle">
+          <div class="panel-heading compact-heading">
+            <div>
+              <p class="panel-kicker">100-POINT SCORECARD</p>
+              <h3 id="scoreTitle">八维商业评分</h3>
+            </div>
+            <div class="score-total"><strong id="selectedScore">--</strong><span>/ 100</span></div>
+          </div>
+          <p id="selectedScoreName" class="selected-score-name">运行后查看候选评分</p>
+          <div class="table-scroll score-table-scroll" tabindex="0" aria-label="八维商业评分表，可横向滚动">
+            <table class="score-table">
+              <thead>
+                <tr><th scope="col">维度</th><th scope="col">分数</th><th scope="col">权重</th><th scope="col">判断依据</th><th scope="col">证据</th></tr>
+              </thead>
+              <tbody id="scoreMatrix"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="insight-section section-band" aria-labelledby="insightTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">TREND TO OPPORTUNITY</p>
+          <h2 id="insightTitle">趋势感知与用户机会</h2>
+        </div>
+        <span id="insightScope" class="section-note">等待研究样本</span>
+      </div>
+      <div class="insight-grid">
+        <section class="unframed-column" aria-labelledby="trendTitle">
+          <div class="subsection-heading"><h3 id="trendTitle">趋势雷达</h3><span id="trendCount">0 条信号</span></div>
+          <div id="trendSignals" class="signal-list"></div>
+        </section>
+        <section class="unframed-column opportunity-column" aria-labelledby="opportunityTitle">
+          <div class="subsection-heading"><h3 id="opportunityTitle">高价值用户机会</h3><span id="opportunityCount">0 个机会</span></div>
+          <div id="opportunityList" class="signal-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="candidate-section" aria-labelledby="candidateTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CANDIDATE VALIDATION</p>
+          <h2 id="candidateTitle">候选 SKU 深度验证</h2>
+        </div>
+        <p class="section-note">切换候选只更新下方详情，榜首决策保持不变</p>
+      </div>
+      <div class="candidate-grid">
+        <section class="panel candidate-detail-panel" aria-labelledby="candidateDetailTitle">
+          <div class="panel-heading"><h3 id="candidateDetailTitle">商品概念</h3><span class="panel-meta">概念示意</span></div>
+          <div id="candidateDetail" role="tabpanel" tabindex="0" aria-labelledby="candidateDetailTitle"></div>
+        </section>
+        <section class="panel validation-panel" aria-labelledby="validationTitle">
+          <div class="panel-heading"><h3 id="validationTitle">用户镜像验证</h3><span id="acceptanceSummary" class="panel-meta">待运行</span></div>
+          <div id="launchValidation"></div>
+        </section>
+        <section class="panel risk-panel" aria-labelledby="riskTitle">
+          <div class="panel-heading"><h3 id="riskTitle">商品可行性与风险</h3><span id="qualityStatus" class="panel-meta">待运行</span></div>
+          <div id="qualityRisk"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="proposal-section section-band" aria-labelledby="proposalTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">WINNER PROPOSAL</p>
+          <h2 id="proposalTitle">榜首上市提案</h2>
+        </div>
+        <span class="section-note">提案始终对应组合榜首</span>
+      </div>
+      <div class="proposal-grid">
+        <article id="winnerProposal" class="proposal-copy"></article>
+        <aside class="evidence-panel" aria-labelledby="evidenceTitle">
+          <div class="subsection-heading"><h3 id="evidenceTitle">证据详情</h3><span id="evidenceMode">请选择证据</span></div>
+          <div id="evidenceDetail" aria-live="polite"></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="audit-section" aria-labelledby="auditTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SECONDARY AUDIT</p>
+          <h2 id="auditTitle">决策审计与基线对照</h2>
+        </div>
+        <span id="auditSummary" class="section-note">等待 Agent 工具调用记录</span>
+      </div>
+      <div class="audit-grid">
+        <section class="panel" aria-labelledby="rubricTitle">
+          <div class="panel-heading"><h3 id="rubricTitle">可解释性评测</h3></div>
+          <div id="rubricMetrics" class="metric-list"></div>
+        </section>
+        <section class="panel" aria-labelledby="baselineTitle">
+          <div class="panel-heading"><h3 id="baselineTitle">Agent 决策 vs 经验基线</h3></div>
+          <div id="baselineComparison"></div>
+        </section>
+        <section class="panel" aria-labelledby="toolAuditTitle">
+          <div class="panel-heading"><h3 id="toolAuditTitle">只读工具调用</h3></div>
+          <div id="toolAudit"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div class="footer-run">
+      <strong>Trend2SKU</strong>
+      <span id="runMeta">尚未生成运行记录</span>
+    </div>
+    <nav class="report-links" aria-label="运行报告">
+      <a id="fullReportLink" class="report-link" aria-disabled="true">完整运行报告</a>
+      <a id="openingReportLink" class="report-link" aria-disabled="true">开题报告摘要</a>
+      <button id="jsonDownloadBtn" class="report-link" type="button" disabled>下载当前结果</button>
+    </nav>
+    <p>所有候选、访谈、NPS 与商业评分均为离线演示推演，需接入企业真实数据后校准。</p>
+  </footer>
+
+  <dialog id="reportDialog" class="report-dialog" aria-labelledby="reportDialogTitle">
+    <div class="dialog-header">
+      <div>
+        <p class="panel-kicker">RUN REPORT</p>
+        <h2 id="reportDialogTitle">运行报告</h2>
+      </div>
+      <button id="reportCloseBtn" class="icon-button" type="button" title="关闭报告" aria-label="关闭报告">×</button>
+    </div>
+    <div class="report-tabs" role="tablist" aria-label="报告类型">
+      <button id="fullReportTab" type="button" role="tab" aria-selected="true" aria-controls="reportPanel" data-report-kind="full">完整报告</button>
+      <button id="openingReportTab" type="button" role="tab" aria-selected="false" aria-controls="reportPanel" data-report-kind="opening">开题摘要</button>
+    </div>
+    <section id="reportPanel" class="report-panel" role="tabpanel" aria-labelledby="fullReportTab">
+      <p id="reportStatus" class="report-status" role="status" aria-live="polite">选择报告后加载。</p>
+      <pre id="reportMarkdown" tabindex="0"></pre>
+    </section>
+    <div class="dialog-actions">
+      <button id="reportRetryBtn" class="secondary-button" type="button">重试</button>
+      <button id="reportDownloadBtn" class="primary-button" type="button" disabled>下载 Markdown</button>
+      <button id="reportDoneBtn" class="secondary-button" type="button">关闭</button>
+    </div>
+  </dialog>
+
+  <noscript>
+    <div class="noscript-message">此经营工作台需要启用 JavaScript 才能运行 Agent。</div>
+  </noscript>
+  <script src="static/pages-demo.js" defer></script>
+  <script src="static/app.js" defer></script>
+</body>
+</html>
